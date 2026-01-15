@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -21,10 +22,11 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, maxWidt
       document.body.style.overflow = 'hidden';
     } else {
       setIsVisible(false);
+      // Ensure this timeout matches the CSS transition duration
       const timer = setTimeout(() => {
         setShouldRender(false);
         document.body.style.overflow = 'unset';
-      }, 300); // Match transition duration
+      }, 200); 
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
@@ -57,18 +59,18 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, maxWidt
     'full': 'max-w-full mx-4',
   }[maxWidth];
 
-  return (
+  const modalContent = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-hidden">
       {/* Backdrop */}
       <div 
-        className={`fixed inset-0 bg-zinc-950/75 backdrop-blur-sm transition-opacity duration-300 ease-in-out ${isVisible ? 'opacity-100' : 'opacity-0'}`}
+        className={`fixed inset-0 bg-zinc-950/75 backdrop-blur-sm transition-opacity duration-200 ease-out ${isVisible ? 'opacity-100' : 'opacity-0'}`}
         onClick={onClose}
         aria-hidden="true"
       />
       
       {/* Modal Content */}
       <div 
-        className={`relative w-full ${maxWidthClass} transform rounded-2xl bg-white shadow-2xl ring-1 ring-gray-900/5 flex flex-col max-h-[90vh] transition-all duration-300 cubic-bezier(0.16, 1, 0.3, 1) ${isVisible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-4'}`}
+        className={`relative w-full ${maxWidthClass} transform rounded-2xl bg-white shadow-2xl ring-1 ring-gray-900/5 flex flex-col max-h-[90vh] transition-all duration-200 cubic-bezier(0.16, 1, 0.3, 1) ${isVisible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-4'}`}
         role="dialog"
         aria-modal="true"
       >
@@ -88,6 +90,8 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, maxWidt
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 };
 
 export default Modal;

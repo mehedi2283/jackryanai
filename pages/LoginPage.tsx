@@ -16,12 +16,15 @@ const LoginPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   
   const location = useLocation();
+  // navigate is available but we won't use it for dashboard redirection to avoid race conditions
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Check if redirected from Dashboard for creation
-    if (location.state?.mode === 'signup') {
+    // Check if redirected from Dashboard for creation (either via state or local storage flag)
+    const storedIntent = localStorage.getItem('jackryan_auth_intent');
+    if (storedIntent === 'signup' || location.state?.mode === 'signup') {
       setIsSignUp(true);
+      if (storedIntent) localStorage.removeItem('jackryan_auth_intent');
     }
   }, [location]);
 
@@ -46,6 +49,7 @@ const LoginPage: React.FC = () => {
           setIsSignUp(false);
           setEmail('');
           setPassword('');
+          setIsLoading(false); // Enable form for login
         }
       } else {
         // Handle Login
@@ -60,19 +64,20 @@ const LoginPage: React.FC = () => {
           throw new Error('Authentication failed. Please try again.');
         }
 
-        // Explicitly navigate to ensure the user isn't stuck on "Processing..."
-        // while the App component updates its state.
-        navigate(RoutePath.DASHBOARD);
+        // IMPORTANT: We do NOT navigate manually here.
+        // We leave isLoading(true). 
+        // The App component listens to supabase.auth.onAuthStateChange.
+        // When the session is set, App.tsx will update the 'user' state.
+        // This will cause the <Route> for Login to render <Navigate to={RoutePath.DASHBOARD} />.
+        // This prevents the race condition where we navigate before the parent App knows the user is logged in.
       }
 
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Authentication failed. Please check your credentials.');
-      // Only sign out if we are in sign up mode to clean slate, otherwise stay to let user retry
+      setIsLoading(false); // Stop loading on error so user can retry
+      // Only sign out if we are in sign up mode to clean slate
       if (isSignUp) await supabase.auth.signOut();
-    } finally {
-      // If we navigated away, this might run on unmount, which is fine
-      setIsLoading(false);
     }
   };
 
@@ -199,7 +204,7 @@ const LoginPage: React.FC = () => {
               <div className="mt-6 text-center pt-4 border-t border-white/5">
                 <button 
                   type="button"
-                  onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccessMessage(''); }}
+                  onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccessMessage(''); setIsLoading(false); }}
                   className="text-sm text-zinc-400 hover:text-white transition-colors font-medium flex items-center justify-center w-full"
                 >
                   {isSignUp ? (

@@ -23,14 +23,13 @@ import {
   Terminal,
   AlertCircle,
   Check,
-  Filter,
-  X,
-  AlertTriangle
+  X
 } from 'lucide-react';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import Modal from '../components/Modal';
-import { StoredCredential, FormSubmission, RoutePath } from '../types';
+import Toast from '../components/Toast';
+import { StoredCredential, FormSubmission, RoutePath, User } from '../types';
 import { supabase } from '../services/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
@@ -171,9 +170,47 @@ create table if not exists public.credentials (
 alter table public.credentials enable row level security;
 create policy "Allow all access for authenticated users" on public.credentials for all to authenticated using (true);
 create policy "Allow public inserts" on public.credentials for insert to anon with check (true);
+
+-- 6. Profiles Table (REQUIRED for User Management)
+create table if not exists public.profiles (
+  id uuid references auth.users on delete cascade not null primary key,
+  username text,
+  role text default 'user',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  constraint profiles_role_check check (role in ('grand_admin', 'admin', 'user'))
+);
+alter table public.profiles enable row level security;
+create policy "Allow all access for authenticated users" on public.profiles for all to authenticated using (true);
+create policy "Allow public inserts" on public.profiles for insert to anon with check (true);
+
+-- 7. Auto-Profile Trigger (Automatically creates profile on signup)
+create or replace function public.handle_new_user() 
+returns trigger as $$
+begin
+  insert into public.profiles (id, username, role)
+  values (new.id, new.email, 'user');
+  return new;
+end;
+$$ language plpgsql security definer;
+
+-- Drop trigger if exists to avoid duplication errors during setup
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+-- 8. Sync existing users (Run this once if you already have users but no profiles)
+insert into public.profiles (id, username, role)
+select id, email, 'user' from auth.users
+where id not in (select id from public.profiles)
+on conflict (id) do nothing;
 `;
 
-const DashboardPage: React.FC = () => {
+interface DashboardPageProps {
+  user: User | null;
+}
+
+const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
   const navigate = useNavigate();
   // Navigation State
   const [activeMainTab, setActiveMainTab] = useState<'credentials' | 'submissions'>('credentials');
@@ -187,6 +224,9 @@ const DashboardPage: React.FC = () => {
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [demoMode, setDemoMode] = useState(false);
   
+  // Notification State
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
   // Delete Modal State
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; id: string | null }>({ isOpen: false, id: null });
 
@@ -197,7 +237,6 @@ const DashboardPage: React.FC = () => {
   
   // Modal State
   const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
-  const [isWebhookModalOpen, setIsWebhookModalOpen] = useState(false);
   
   // Search & Pagination & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -321,7 +360,8 @@ const DashboardPage: React.FC = () => {
   };
 
   const updateAllCounts = async () => {
-    const promises = Object.entries(TABLE_MAP).map(async ([type, tableName]) => {
+    // Check form tables
+    const formPromises = Object.entries(TABLE_MAP).map(async ([type, tableName]) => {
       const { count, error } = await supabase.from(tableName).select('*', { count: 'exact', head: true });
       if (error && (error.code === '42P01' || error.message?.includes('does not exist'))) {
         return { type, count: 0, missing: true };
@@ -329,11 +369,17 @@ const DashboardPage: React.FC = () => {
       return { type, count: count || 0, missing: false };
     });
 
-    const results = await Promise.all(promises);
-    const newCounts: Record<string, number> = {};
-    let missingTableDetected = false;
+    // Also Check profiles table specifically
+    const profilePromise = supabase.from('profiles').select('id', { count: 'exact', head: true }).limit(1).then(({ error }) => {
+       return { missing: error && (error.code === '42P01' || error.message?.includes('does not exist')) };
+    });
 
-    results.forEach(r => {
+    const [formResults, profileResult] = await Promise.all([Promise.all(formPromises), profilePromise]);
+    
+    const newCounts: Record<string, number> = {};
+    let missingTableDetected = profileResult.missing || false; // Start with profile result
+
+    formResults.forEach(r => {
       newCounts[r.type] = r.count;
       if (r.missing) missingTableDetected = true;
     });
@@ -411,17 +457,21 @@ const DashboardPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchCredentials();
-    updateAllCounts();
-  }, []);
+    if (user?.role !== 'user') {
+      fetchCredentials();
+      updateAllCounts();
+    }
+  }, [user]);
 
   useEffect(() => {
-    if (activeMainTab === 'submissions') {
+    if (user?.role !== 'user' && activeMainTab === 'submissions') {
       fetchSubmissionsData(activeFormTab);
     }
-  }, [activeFormTab, activeMainTab]);
+  }, [activeFormTab, activeMainTab, user]);
 
   useEffect(() => {
+    if (user?.role === 'user') return;
+
     const channels: RealtimeChannel[] = [];
     
     const credChannel = supabase
@@ -446,7 +496,33 @@ const DashboardPage: React.FC = () => {
     return () => {
       channels.forEach(ch => supabase.removeChannel(ch));
     };
-  }, []);
+  }, [user]);
+
+  // --- ACCESS RESTRICTION VIEW ---
+  if (user && user.role === 'user') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center animate-fade-in p-6">
+        <div className="bg-amber-50 p-4 rounded-full mb-6 ring-8 ring-amber-50/50 shadow-inner">
+           <Shield className="h-12 w-12 text-amber-500" />
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2 tracking-tight">Access Restricted</h2>
+        <p className="text-gray-500 max-w-md mb-8 leading-relaxed">
+          Your operative clearance is currently <strong>Level 1 (Pending)</strong>.
+          <br/>
+          Mission Control modules are classified <span className="text-amber-600 font-medium">Level 3</span> and above.
+        </p>
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 max-w-sm w-full text-left flex items-start space-x-4 shadow-sm">
+           <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+              <Lock className="h-5 w-5 text-gray-400" />
+           </div>
+           <div>
+              <p className="text-sm font-bold text-gray-900">Authorization Required</p>
+              <p className="text-xs text-gray-500 mt-1.5 leading-5">Access to encrypted vaults and form intelligence requires administrative approval. Please contact a Grand Administrator to upgrade your security profile.</p>
+           </div>
+        </div>
+      </div>
+    );
+  }
 
   // --- HANDLERS ---
   const handleSaveCredential = async (e: React.FormEvent) => {
@@ -462,6 +538,7 @@ const DashboardPage: React.FC = () => {
             password: newCred.password,
             last_updated: new Date().toISOString()
           }).eq('id', editingId);
+          setToast({ message: "Credential updated successfully", type: 'success' });
       } else {
         await supabase.from('credentials').insert({
             client_name: newCred.clientName,
@@ -471,6 +548,7 @@ const DashboardPage: React.FC = () => {
             password: newCred.password,
             last_updated: new Date().toISOString()
           });
+          setToast({ message: "New credential secured in vault", type: 'success' });
       }
       await fetchCredentials(); 
       setIsAddModalOpen(false);
@@ -482,7 +560,7 @@ const DashboardPage: React.FC = () => {
         alert("Setup Required: The 'credentials' table is missing.");
         setIsSqlModalOpen(true);
       } else {
-        alert(`Failed to save credential: ${error.message}`);
+        setToast({ message: `Error: ${error.message}`, type: 'error' });
       }
     } finally {
       setIsSavingCredential(false);
@@ -521,7 +599,9 @@ const DashboardPage: React.FC = () => {
         console.error("Delete failed", error);
         // If deletion fails, revert by refetching
         fetchCredentials();
-        alert("Failed to delete credential. Please try again.");
+        setToast({ message: "Failed to delete credential", type: 'error' });
+    } else {
+        setToast({ message: "Credential removed from vault", type: 'success' });
     }
   };
 
@@ -530,6 +610,7 @@ const DashboardPage: React.FC = () => {
   const handleCopy = (text: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
+    setToast({ message: "Copied to clipboard", type: 'success' });
   };
 
   const toggleSubmission = (id: string) => {
@@ -565,6 +646,7 @@ const DashboardPage: React.FC = () => {
       await supabase.from(tableName).update({ payload: editingSubmission.payload }).eq('id', editingSubmission.id);
       setIsEditSubmissionModalOpen(false);
       setEditingSubmission(null);
+      setToast({ message: "Submission data updated", type: 'success' });
     }
   };
 
@@ -619,23 +701,71 @@ const DashboardPage: React.FC = () => {
 
   const PaginationControls = () => {
     if (totalItems === 0 && searchQuery) return null;
+    
+    // Calculate page range to show (e.g. 1 2 3 4 5)
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, startPage + 4);
+    
+    if (endPage - startPage < 4) {
+      startPage = Math.max(1, endPage - 4);
+    }
+    
+    const pageNumbers = [];
+    for (let i = startPage; i <= endPage; i++) {
+      pageNumbers.push(i);
+    }
+
     return (
-      <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3 sm:px-6 bg-white rounded-b-xl mt-auto">
-        <div className="flex flex-1 justify-between sm:hidden">
-          <Button variant="secondary" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1} className="text-xs px-3 py-1.5 h-auto">Previous</Button>
-          <Button variant="secondary" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages} className="text-xs px-3 py-1.5 h-auto">Next</Button>
-        </div>
-        <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm text-gray-700">Showing <span className="font-medium">{Math.min(startStartIndex + 1, totalItems)}</span> to <span className="font-medium">{Math.min(endIndex, totalItems)}</span> of <span className="font-medium">{totalItems}</span> results</p>
-          </div>
-          <div>
-            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
-              <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1} className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50"><ChevronLeft className="h-5 w-5" /></button>
-              <div className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300">Page {currentPage} of {totalPages}</div>
-              <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages} className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50"><ChevronRight className="h-5 w-5" /></button>
-            </nav>
-          </div>
+      <div className="flex items-center justify-center border-t border-gray-200 px-4 py-4 sm:px-6 bg-white rounded-b-2xl mt-auto transition-all">
+        <div className="flex items-center space-x-2">
+            <button 
+                onClick={() => goToPage(currentPage - 1)} 
+                disabled={currentPage === 1} 
+                className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                title="Previous"
+            >
+                <ChevronLeft className="h-5 w-5" />
+            </button>
+            
+            <div className="hidden sm:flex items-center space-x-1">
+                {startPage > 1 && (
+                    <>
+                        <button onClick={() => goToPage(1)} className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 ${currentPage === 1 ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm' : 'text-gray-600'}`}>1</button>
+                        {startPage > 2 && <span className="text-gray-300 px-1">...</span>}
+                    </>
+                )}
+                
+                {pageNumbers.map(page => (
+                    <button 
+                        key={page} 
+                        onClick={() => goToPage(page)} 
+                        className={`w-8 h-8 rounded-lg text-sm font-medium transition-all duration-200 ${currentPage === page ? 'bg-indigo-600 text-white shadow-md scale-105' : 'text-gray-600 hover:bg-gray-100'}`}
+                    >
+                        {page}
+                    </button>
+                ))}
+
+                {endPage < totalPages && (
+                    <>
+                         {endPage < totalPages - 1 && <span className="text-gray-300 px-1">...</span>}
+                        <button onClick={() => goToPage(totalPages)} className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 ${currentPage === totalPages ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm' : 'text-gray-600'}`}>{totalPages}</button>
+                    </>
+                )}
+            </div>
+            
+            {/* Mobile simple view */}
+            <div className="sm:hidden text-sm font-medium text-gray-600 px-2">
+               Page {currentPage} of {totalPages}
+            </div>
+
+            <button 
+                onClick={() => goToPage(currentPage + 1)} 
+                disabled={currentPage === totalPages} 
+                className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                title="Next"
+            >
+                <ChevronRight className="h-5 w-5" />
+            </button>
         </div>
       </div>
     );
@@ -688,6 +818,15 @@ const DashboardPage: React.FC = () => {
   return (
     <div className="space-y-6 pb-10">
       
+      {/* Toast Notification */}
+      {toast && (
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          onClose={() => setToast(null)} 
+        />
+      )}
+      
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-4">
         <div className="flex-shrink-0">
@@ -737,7 +876,9 @@ const DashboardPage: React.FC = () => {
             
             {activeMainTab === 'credentials' && selectedCrmFilter && (
                 <div className="md:hidden flex items-center bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 animate-fade-in">
-                    <span className="text-xs font-semibold mr-2">Filtered: {selectedCrmFilter}</span>
+                    <span className="text-xs font-semibold mr-2 uppercase tracking-wide opacity-0 group-hover/lock:opacity-100 transition-opacity text-amber-600/50">
+                        Filtered: {selectedCrmFilter}
+                    </span>
                     <button onClick={() => setSelectedCrmFilter(null)} className="p-0.5 hover:bg-indigo-100 rounded-full transition-colors"><X className="h-3.5 w-3.5" /></button>
                 </div>
             )}
@@ -754,12 +895,9 @@ const DashboardPage: React.FC = () => {
                     onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
                 />
             </div>
-           <div className="flex-shrink-0">
+           <div className="flex-shrink-0 flex space-x-2">
                {activeMainTab === 'credentials' && (
                  <Button onClick={openAddModal} className="w-full sm:w-auto"><Plus className="h-5 w-5 mr-2" />Add Credential</Button>
-               )}
-               {activeMainTab === 'submissions' && (
-                 <Button onClick={() => setIsWebhookModalOpen(true)} className="w-full sm:w-auto"><LinkIcon className="h-5 w-5 mr-2" />Integration Info</Button>
                )}
            </div>
         </div>
@@ -771,7 +909,7 @@ const DashboardPage: React.FC = () => {
           <AlertCircle className="h-5 w-5 text-amber-500 mt-0.5 flex-shrink-0" />
           <div className="ml-3 flex-1">
             <h3 className="text-sm font-medium text-amber-800">Database Connection: Demo Mode</h3>
-            <p className="mt-1 text-sm text-amber-700">The required database table for <strong>{activeFormTab}</strong> was not found.</p>
+            <p className="mt-1 text-sm text-amber-700">The required database table for <strong>{activeFormTab}</strong> or <strong>User Profiles</strong> was not found.</p>
             <button onClick={() => setIsSqlModalOpen(true)} className="mt-2 flex items-center text-sm font-semibold text-amber-800 hover:text-amber-900 group">
               <Terminal className="h-4 w-4 mr-1.5" /><span className="group-hover:underline">View SQL Setup Script</span>
             </button>
@@ -814,11 +952,11 @@ const DashboardPage: React.FC = () => {
               {currentCredentials.map((cred) => {
                 const crmStyle = getCrmStyle(cred.serviceName);
                 return (
-                  <div key={cred.id} className="group relative bg-white rounded-xl border border-gray-200 p-5 transition-all hover:shadow-md hover:border-indigo-200 flex flex-col h-full">
+                  <div key={cred.id} className="group relative bg-white rounded-xl border border-gray-200 p-5 transition-all hover:shadow-md hover:border-indigo-200 flex flex-col h-full animate-fade-in">
                     <div className="flex justify-between items-start mb-4">
                       <div className="flex items-center space-x-3 max-w-[70%]">
-                        <div className="p-2 bg-gray-50 rounded-lg group-hover:bg-indigo-50 transition-colors flex-shrink-0">
-                          <Building className="h-5 w-5 text-indigo-500" />
+                        <div className="h-12 w-12 bg-gray-50 rounded-xl flex items-center justify-center group-hover:bg-indigo-50 transition-colors border border-gray-100 flex-shrink-0">
+                          <Building className="h-6 w-6 text-indigo-500" />
                         </div>
                         <div className="min-w-0">
                           <h3 className="font-bold text-gray-900 truncate" title={cred.clientName}>{cred.clientName}</h3>
@@ -901,8 +1039,8 @@ const DashboardPage: React.FC = () => {
 
       {/* FORM SUBMISSIONS TAB CONTENT */}
       {activeMainTab === 'submissions' && (
-        <section key="submissions-section" className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mt-6 min-h-[500px] flex flex-col animate-fade-in">
-          <div className="bg-gray-50/80 border-b border-gray-200">
+        <section key="submissions-section" className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-6 min-h-[500px] flex flex-col animate-fade-in relative">
+          <div className="bg-gray-50/80 border-b border-gray-200 rounded-t-2xl">
             <div className="px-2 pt-2 pb-0 flex overflow-x-auto space-x-1 scrollbar-hide">
               {FORM_TYPES.map((type) => {
                 const isActive = activeFormTab === type;
@@ -932,6 +1070,7 @@ const DashboardPage: React.FC = () => {
                 <div key={activeFormTab} className="flex flex-col space-y-3 animate-fade-in">
                   {currentSubmissions.map((submission) => {
                     const isExpanded = expandedSubmissionId === submission.id;
+                    const isDropdownOpen = openStatusId === submission.id;
                     const payloadKeys = Object.keys(submission.payload);
                     
                     const priorityKeys = ['full_name', 'business_name', 'client_name', 'company_name', 'legal_name', 'Full Name', 'Business Name', 'Client Name'];
@@ -949,12 +1088,22 @@ const DashboardPage: React.FC = () => {
                     const sortedPayloadKeys = [...payloadKeys].sort((a, b) => {
                          const getPriority = (k: string) => {
                             const lower = k.toLowerCase();
-                            // Order: Name -> Email -> AI Tasks -> A2P -> Simpletalk -> Others
-                            if (/client.?name|full.?name|business.?name/i.test(lower) && !/bot|campaign|agent/i.test(lower)) return 1;
+                            
+                            // 1. Client/Business/Personal Name
+                            if (/client.?name|full.?name|business.?name|company.?name|legal.?name/i.test(lower)) return 1;
+                            
+                            // 2. Email
                             if (/email/i.test(lower)) return 2;
-                            if (/ai.?task|bot.?goal|primary.?bot/i.test(lower)) return 3;
+                            
+                            // 3. AI Tasks / Goals
+                            if (/ai.?task|bot.?goal|primary.?bot|bot.?name/i.test(lower)) return 3;
+                            
+                            // 4. A2P
                             if (/a2p/i.test(lower)) return 4;
+                            
+                            // 5. Simpletalk
                             if (/simpletalk/i.test(lower)) return 5;
+                            
                             return 100;
                          };
                          const sA = getPriority(a);
@@ -964,7 +1113,7 @@ const DashboardPage: React.FC = () => {
                     });
 
                     return (
-                      <div key={submission.id} className={`bg-white rounded-lg border-l-4 border-y border-r transition-all duration-300 ${statusColorClass} ${isExpanded ? 'border-y-indigo-200 border-r-indigo-200 shadow-md' : 'border-y-gray-200 border-r-gray-200 hover:border-y-indigo-200 hover:border-r-indigo-200 hover:shadow-sm'}`}>
+                      <div key={submission.id} className={`bg-white rounded-lg border-l-4 border-y border-r transition-all duration-300 animate-fade-in ${statusColorClass} ${isExpanded ? 'border-y-indigo-200 border-r-indigo-200 shadow-md' : 'border-y-gray-200 border-r-gray-200 hover:border-y-indigo-200 hover:border-r-indigo-200 hover:shadow-sm'} ${isDropdownOpen ? 'relative z-20' : 'relative z-0'}`}>
                         <div onClick={() => toggleSubmission(submission.id)} className="p-4 flex items-center justify-between cursor-pointer group select-none relative">
                            <div className="flex items-center space-x-4 flex-1 min-w-0">
                                <div className="hidden sm:block">
@@ -1051,46 +1200,6 @@ const DashboardPage: React.FC = () => {
           <PaginationControls />
         </section>
       )}
-
-      {/* WEBHOOK INTEGRATION MODAL */}
-      <Modal isOpen={isWebhookModalOpen} onClose={() => setIsWebhookModalOpen(false)} title="Integration Endpoints" maxWidth="2xl">
-        <div className="space-y-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start">
-             <AlertCircle className="h-5 w-5 text-amber-500 mr-2 flex-shrink-0" />
-             <div>
-               <p className="font-semibold">Backend Deployment Required</p>
-               <p className="mt-1">The URLs below point to Supabase Edge Functions. If you haven't deployed the 'clever-worker' function yet, visiting these URLs will result in a "Function not found" error.</p>
-             </div>
-          </div>
-          <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-sm text-indigo-800">
-             <p>Use these URLs to POST JSON data from external forms (Typeform, HighLevel, etc.). Data is automatically securely stored in the appropriate table.</p>
-          </div>
-          <div className="space-y-3">
-             {FORM_TYPES.map((type, idx) => (
-                <div key={idx} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
-                   <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs font-bold text-gray-600 uppercase tracking-wide">{type}</span>
-                      <span className="text-[10px] text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full font-mono">Table: {TABLE_MAP[type]}</span>
-                   </div>
-                   <div className="flex items-center bg-gray-50 rounded border border-gray-200 px-2 py-1.5 mt-1">
-                      <code className="text-xs text-gray-600 flex-1 truncate font-mono">
-                        https://qqxdfqerllirceqiwyex.supabase.co/functions/v1/clever-worker?source={encodeURIComponent(type)}
-                      </code>
-                      <button 
-                        onClick={() => navigator.clipboard.writeText(`https://qqxdfqerllirceqiwyex.supabase.co/functions/v1/clever-worker?source=${encodeURIComponent(type)}`)}
-                        className="ml-2 text-indigo-600 hover:text-indigo-800 text-xs font-medium"
-                      >
-                        Copy
-                      </button>
-                   </div>
-                </div>
-             ))}
-          </div>
-          <div className="pt-2 text-right">
-             <Button variant="secondary" onClick={() => setIsWebhookModalOpen(false)}>Close</Button>
-          </div>
-        </div>
-      </Modal>
 
       {/* SQL SETUP MODAL */}
       <Modal isOpen={isSqlModalOpen} onClose={() => setIsSqlModalOpen(false)} title="Database Setup SQL" maxWidth="4xl">
@@ -1222,14 +1331,14 @@ const DashboardPage: React.FC = () => {
                       {isLongText ? (
                           <textarea 
                             rows={3} 
-                            className="appearance-none block w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 transition-colors" 
+                            className="appearance-none block w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 transition-colors" 
                             value={stringValue} 
                             onChange={(e) => handlePayloadChange(key, e.target.value)} 
                           />
                       ) : (
                           <input 
                             type="text" 
-                            className="appearance-none block w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 transition-colors" 
+                            className="appearance-none block w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 transition-colors" 
                             value={stringValue} 
                             onChange={(e) => handlePayloadChange(key, e.target.value)} 
                           />

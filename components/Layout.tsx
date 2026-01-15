@@ -1,12 +1,12 @@
 import React from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Shield, LayoutDashboard, LogOut, Menu, X, Users } from 'lucide-react';
+import { Shield, LayoutDashboard, LogOut, Menu, X, Users, Crown, ChevronUp } from 'lucide-react';
 import { RoutePath } from '../types';
 
 interface LayoutProps {
   children: React.ReactNode;
   onLogout: () => void;
-  user: { username: string } | null;
+  user: { username: string; role: 'grand_admin' | 'admin' | 'user' } | null;
 }
 
 const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
@@ -16,10 +16,32 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
+  const isAdminOrGrand = user?.role === 'admin' || user?.role === 'grand_admin';
+
+  // Filter navigation items based on role
   const navItems = [
     { name: 'Dashboard', path: RoutePath.DASHBOARD, icon: LayoutDashboard },
-    { name: 'Users', path: RoutePath.USERS, icon: Users },
+    // Only show Users tab if user is admin or grand_admin
+    ...(isAdminOrGrand ? [{ name: 'Users', path: RoutePath.USERS, icon: Users }] : []),
   ];
+
+  const getRoleLabel = () => {
+    if (user?.role === 'grand_admin') return 'Grand Administrator';
+    if (user?.role === 'admin') return 'Administrator';
+    return 'Operative';
+  };
+
+  const getRoleColor = () => {
+    if (user?.role === 'grand_admin') return 'text-amber-400';
+    if (user?.role === 'admin') return 'text-indigo-400';
+    return 'text-emerald-400';
+  };
+
+  const getRoleBg = () => {
+    if (user?.role === 'grand_admin') return 'bg-amber-400';
+    if (user?.role === 'admin') return 'bg-indigo-400';
+    return 'bg-emerald-400';
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex font-sans text-gray-900">
@@ -35,7 +57,7 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
       <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-zinc-950 text-white transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:inset-auto md:flex md:flex-col border-r border-zinc-800`}>
         <div className="flex items-center justify-between h-20 px-6 border-b border-zinc-800/50 bg-zinc-950">
           <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600/20 p-2 rounded-lg">
+            <div className="bg-indigo-600/20 p-2 rounded-lg border border-indigo-500/10">
                <Shield className="h-6 w-6 text-indigo-400" />
             </div>
             <span className="text-lg font-bold tracking-tight text-white">JackRyanAI</span>
@@ -45,9 +67,9 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
           </button>
         </div>
 
-        <div className="flex-1 flex flex-col justify-between overflow-y-auto py-6">
-          <nav className="px-4 space-y-2">
-            <p className="px-4 text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-4">Core Modules</p>
+        <div className="flex-1 flex flex-col justify-between overflow-y-auto">
+          <nav className="px-4 py-6 space-y-2">
+            <p className="px-4 text-xs font-bold text-zinc-600 uppercase tracking-widest mb-4">Core Modules</p>
             {navItems.map((item) => {
               const isActive = location.pathname === item.path;
               return (
@@ -56,8 +78,8 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
                   to={item.path}
                   className={`group flex items-center justify-between px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 ${
                     isActive
-                      ? 'bg-indigo-600/10 text-indigo-300 shadow-sm'
-                      : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                      ? 'bg-indigo-600/10 text-indigo-300 shadow-sm border border-indigo-500/10'
+                      : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 border border-transparent'
                   }`}
                   onClick={() => setIsSidebarOpen(false)}
                 >
@@ -71,28 +93,29 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
             })}
           </nav>
 
-          <div className="px-4">
-            <div className="bg-zinc-900/50 rounded-2xl p-4 border border-zinc-800">
-              <div className="flex items-center mb-4">
-                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg">
-                  {user?.username.charAt(0).toUpperCase()}
-                </div>
-                <div className="ml-3 overflow-hidden">
-                  <p className="text-sm font-medium text-white truncate">{user?.username}</p>
-                  <p className="text-xs text-emerald-400 flex items-center mt-0.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
-                    Secure
-                  </p>
-                </div>
+          <div className="p-4 border-t border-zinc-900 bg-zinc-950/50">
+              <div className="flex items-center gap-3 mb-3 px-2">
+                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold shadow-lg ring-1 ring-white/10 ${user?.role === 'grand_admin' ? 'bg-gradient-to-br from-amber-400 to-orange-600' : 'bg-gradient-to-br from-indigo-500 to-purple-600'}`}>
+                    {user?.role === 'grand_admin' ? <Crown className="h-5 w-5" /> : user?.username.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-white truncate">{user?.username}</p>
+                    <div className="flex items-center mt-0.5">
+                      <span className={`h-1.5 w-1.5 rounded-full mr-1.5 ${getRoleBg()}`}></span>
+                      <p className={`text-[10px] uppercase tracking-wider font-semibold truncate ${getRoleColor()}`}>
+                        {getRoleLabel()}
+                      </p>
+                    </div>
+                  </div>
               </div>
+              
               <button
                 onClick={onLogout}
-                className="w-full flex items-center justify-center px-4 py-2 border border-zinc-700 text-xs font-medium rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                className="w-full flex items-center justify-center px-4 py-2.5 text-xs font-semibold tracking-wide text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-lg hover:bg-zinc-800 hover:text-white hover:border-zinc-700 transition-all duration-200 group"
               >
-                <LogOut className="mr-2 h-3.5 w-3.5" />
+                <LogOut className="mr-2 h-3.5 w-3.5 group-hover:text-rose-500 transition-colors" />
                 End Session
               </button>
-            </div>
           </div>
         </div>
       </div>
@@ -117,7 +140,9 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-8">
           <div className="max-w-7xl mx-auto">
-            {children}
+             <div key={location.pathname} className="animate-fade-in-up">
+                {children}
+             </div>
           </div>
         </main>
       </div>

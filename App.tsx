@@ -23,16 +23,33 @@ const App: React.FC = () => {
         .single();
       
       if (data) {
+        // Map database role to application role type
+        let userRole: User['role'] = 'user';
+        if (data.role === 'grand_admin') userRole = 'grand_admin';
+        else if (data.role === 'admin') userRole = 'admin';
+
         // Upgrade user state with profile data
         setUser({ 
           id: sessionUser.id, 
           username: data.username || sessionUser.email || 'Operative', 
-          role: data.role === 'admin' ? 'admin' : 'user'
+          role: userRole
         });
+      } else {
+         // Default fallback if profile missing or table doesn't exist yet
+         setUser({ 
+            id: sessionUser.id, 
+            username: sessionUser.email || 'Operative', 
+            role: 'user' 
+          });
       }
     } catch (err) {
-      // Silent fail on profile fetch - user is already logged in with basic access
-      console.warn('Background profile fetch failed:', err);
+      console.warn('Background profile fetch failed (likely missing table):', err);
+      // Ensure user is still set even if profile fetch fails
+      setUser((prev) => prev || { 
+        id: sessionUser.id, 
+        username: sessionUser.email || 'Operative', 
+        role: 'user' 
+      });
     }
   };
 
@@ -40,26 +57,37 @@ const App: React.FC = () => {
   useEffect(() => {
     let mounted = true;
 
+    // Safety timeout to prevent infinite loading if Supabase hangs or table is missing
+    const loadingTimeout = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn('Auth check timed out - forcing application load');
+        setLoading(false);
+      }
+    }, 2500);
+
     const initializeAuth = async () => {
       try {
         // Check current session
         const { data: { session }, error } = await supabase.auth.getSession();
         
         if (session?.user && mounted) {
-           // Optimistic Login: Let them in immediately with basic info
+           // Optimistic Login: Default to user first
            setUser({ 
              id: session.user.id, 
              username: session.user.email || 'Operative', 
-             role: 'admin' // Default to admin for usability in this specific app
+             role: 'user' 
            });
            
-           // Fetch profile in background to update username/role if exists
-           fetchProfileAndUpgradeUser(session.user);
+           // Fetch profile in background to update username/role
+           await fetchProfileAndUpgradeUser(session.user);
         }
       } catch (error) {
         console.error('Error checking auth session:', error);
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          clearTimeout(loadingTimeout);
+          setLoading(false);
+        }
       }
     };
 
@@ -70,34 +98,34 @@ const App: React.FC = () => {
       if (!mounted) return;
       
       if (session?.user) {
-        // Optimistic Login on change event
-        setUser(currentUser => {
-            // Only update if not already set to avoid flickers
-            if (currentUser?.id === session.user.id) return currentUser;
-            return { 
-                id: session.user.id, 
-                username: session.user.email || 'Operative', 
-                role: 'admin' 
-            };
-        });
-        
-        // Background fetch
-        fetchProfileAndUpgradeUser(session.user);
+        // Fetch profile immediately to ensure correct role
+        await fetchProfileAndUpgradeUser(session.user);
       } else {
         setUser(null);
       }
       
-      if (mounted) setLoading(false);
+      if (mounted) {
+        clearTimeout(loadingTimeout);
+        setLoading(false);
+      }
     });
 
     return () => {
       mounted = false;
+      clearTimeout(loadingTimeout);
       subscription.unsubscribe();
     };
   }, []);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error('Error during sign out:', error);
+    } finally {
+      // Always clear local state to ensure UI updates even if network fails
+      setUser(null);
+    }
   };
 
   if (loading) {
@@ -110,6 +138,8 @@ const App: React.FC = () => {
       </div>
     );
   }
+
+  const isAuthorizedAdmin = user?.role === 'admin' || user?.role === 'grand_admin';
 
   return (
     <HashRouter>
@@ -125,7 +155,7 @@ const App: React.FC = () => {
           element={
             <ProtectedRoute isAuthenticated={!!user}>
               <Layout onLogout={handleLogout} user={user}>
-                <DashboardPage />
+                <DashboardPage user={user} />
               </Layout>
             </ProtectedRoute>
           }
@@ -135,9 +165,13 @@ const App: React.FC = () => {
           path={RoutePath.USERS}
           element={
             <ProtectedRoute isAuthenticated={!!user}>
-              <Layout onLogout={handleLogout} user={user}>
-                <UsersPage />
-              </Layout>
+              {isAuthorizedAdmin ? (
+                <Layout onLogout={handleLogout} user={user}>
+                  <UsersPage />
+                </Layout>
+              ) : (
+                <Navigate to={RoutePath.DASHBOARD} replace />
+              )}
             </ProtectedRoute>
           }
         />
