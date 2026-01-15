@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Shield, Lock, Fingerprint, ChevronRight, AlertTriangle, UserPlus, CheckCircle2, Eye, EyeOff } from 'lucide-react';
+import { Shield, Fingerprint, ChevronRight, AlertTriangle, UserPlus, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import { supabase } from '../services/supabase';
-import { RoutePath } from '../types';
 
 const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -201,7 +200,7 @@ const LoginPage: React.FC = () => {
                 </Button>
               </form>
 
-              <div className="mt-6 text-center pt-4 border-t border-white/5">
+              <div className="mt-6 text-center pt-4 border-t border-white/5 space-y-4">
                 <button 
                   type="button"
                   onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccessMessage(''); setIsLoading(false); }}

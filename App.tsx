@@ -57,14 +57,6 @@ const App: React.FC = () => {
   useEffect(() => {
     let mounted = true;
 
-    // Safety timeout to prevent infinite loading if Supabase hangs or table is missing
-    const loadingTimeout = setTimeout(() => {
-      if (mounted && loading) {
-        console.warn('Auth check timed out - forcing application load');
-        setLoading(false);
-      }
-    }, 2500);
-
     const initializeAuth = async () => {
       try {
         // Check current session
@@ -85,7 +77,6 @@ const App: React.FC = () => {
         console.error('Error checking auth session:', error);
       } finally {
         if (mounted) {
-          clearTimeout(loadingTimeout);
           setLoading(false);
         }
       }
@@ -105,14 +96,12 @@ const App: React.FC = () => {
       }
       
       if (mounted) {
-        clearTimeout(loadingTimeout);
         setLoading(false);
       }
     });
 
     return () => {
       mounted = false;
-      clearTimeout(loadingTimeout);
       subscription.unsubscribe();
     };
   }, []);
