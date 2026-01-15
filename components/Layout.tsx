@@ -44,7 +44,7 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex font-sans text-gray-900">
+    <div className="h-screen bg-gray-50 flex font-sans text-gray-900 overflow-hidden">
       {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
         <div 
@@ -54,8 +54,9 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
       )}
 
       {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-zinc-950 text-white transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:inset-auto md:flex md:flex-col border-r border-zinc-800`}>
-        <div className="flex items-center justify-between h-20 px-6 border-b border-zinc-800/50 bg-zinc-950">
+      <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-zinc-950 text-white transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 md:flex md:flex-col border-r border-zinc-800 flex-shrink-0`}>
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-center justify-between h-20 px-6 border-b border-zinc-800/50 bg-zinc-950">
           <div className="flex items-center space-x-3">
             <div className="bg-indigo-600/20 p-2 rounded-lg border border-indigo-500/10">
                <Shield className="h-6 w-6 text-indigo-400" />
@@ -67,7 +68,8 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
           </button>
         </div>
 
-        <div className="flex-1 flex flex-col justify-between overflow-y-auto">
+        {/* Scrollable Nav */}
+        <div className="flex-1 overflow-y-auto">
           <nav className="px-4 py-6 space-y-2">
             <p className="px-4 text-xs font-bold text-zinc-600 uppercase tracking-widest mb-4">Core Modules</p>
             {navItems.map((item) => {
@@ -92,8 +94,10 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
               );
             })}
           </nav>
+        </div>
 
-          <div className="p-4 border-t border-zinc-900 bg-zinc-950/50">
+        {/* Fixed Footer (User Info & Logout) */}
+        <div className="flex-shrink-0 p-4 border-t border-zinc-900 bg-zinc-950/50">
               <div className="flex items-center gap-3 mb-3 px-2">
                   <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold shadow-lg ring-1 ring-white/10 ${user?.role === 'grand_admin' ? 'bg-gradient-to-br from-amber-400 to-orange-600' : 'bg-gradient-to-br from-indigo-500 to-purple-600'}`}>
                     {user?.role === 'grand_admin' ? <Crown className="h-5 w-5" /> : user?.username.charAt(0).toUpperCase()}
@@ -116,13 +120,12 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
                 <LogOut className="mr-2 h-3.5 w-3.5 group-hover:text-rose-500 transition-colors" />
                 End Session
               </button>
-          </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-gray-50">
-        <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 lg:hidden sticky top-0 z-30">
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-gray-50">
+        <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 lg:hidden flex-shrink-0">
           <div className="flex items-center justify-between h-16 px-4 sm:px-6 lg:px-8">
             <button
               onClick={toggleSidebar}

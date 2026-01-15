@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, 
   Trash2, 
@@ -23,13 +25,21 @@ import {
   Terminal,
   AlertCircle,
   Check,
-  X
+  X,
+  Folder,
+  FolderPlus,
+  Move,
+  Home,
+  ArrowUpLeft,
+  CheckSquare,
+  Square,
+  ListChecks
 } from 'lucide-react';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import Modal from '../components/Modal';
 import Toast from '../components/Toast';
-import { StoredCredential, FormSubmission, RoutePath, User } from '../types';
+import { StoredCredential, FormSubmission, RoutePath, User, Folder as FolderType } from '../types';
 import { supabase } from '../services/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
@@ -104,7 +114,48 @@ const FALLBACK_SUBMISSIONS: FormSubmission[] = [
 
 const SETUP_SQL = `-- Run this in your Supabase SQL Editor to create the required tables
 
--- 1. SMS Onboarding Table
+-- 1. Folders Table
+create table if not exists public.folders (
+  id uuid default gen_random_uuid() primary key,
+  name text not null,
+  parent_id uuid references public.folders(id) on delete cascade,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+alter table public.folders enable row level security;
+drop policy if exists "Allow all access for authenticated users" on public.folders;
+create policy "Allow all access for authenticated users" on public.folders for all to authenticated using (true);
+drop policy if exists "Allow public inserts" on public.folders;
+create policy "Allow public inserts" on public.folders for insert to anon with check (true);
+
+-- 2. Credentials Table
+create table if not exists public.credentials (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  client_name text,
+  service_name text,
+  crm_link text,
+  username text,
+  password text,
+  last_updated timestamp with time zone default timezone('utc'::text, now()),
+  folder_id uuid references public.folders(id) on delete set null
+);
+-- Ensure folder_id exists if table was already created
+do $$ 
+begin 
+  if not exists (select 1 from information_schema.columns where table_name = 'credentials' and column_name = 'folder_id') then
+    alter table public.credentials add column folder_id uuid references public.folders(id) on delete set null;
+  end if; 
+end $$;
+
+alter table public.credentials enable row level security;
+drop policy if exists "Allow all access for authenticated users" on public.credentials;
+create policy "Allow all access for authenticated users" on public.credentials for all to authenticated using (true);
+drop policy if exists "Allow public inserts" on public.credentials;
+create policy "Allow public inserts" on public.credentials for insert to anon with check (true);
+
+-- 3. Form Submission Tables
+
+-- SMS Onboarding
 create table if not exists public.sms_onboarding_submissions (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -114,10 +165,12 @@ create table if not exists public.sms_onboarding_submissions (
   source text default 'SMS Onboarding form'
 );
 alter table public.sms_onboarding_submissions enable row level security;
+drop policy if exists "Allow all access for authenticated users" on public.sms_onboarding_submissions;
 create policy "Allow all access for authenticated users" on public.sms_onboarding_submissions for all to authenticated using (true);
+drop policy if exists "Allow public inserts" on public.sms_onboarding_submissions;
 create policy "Allow public inserts" on public.sms_onboarding_submissions for insert to anon with check (true);
 
--- 2. First Call Table
+-- First Call
 create table if not exists public.first_call_submissions (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -127,10 +180,12 @@ create table if not exists public.first_call_submissions (
   source text default 'Jack Ryan A.I. 1st Call'
 );
 alter table public.first_call_submissions enable row level security;
+drop policy if exists "Allow all access for authenticated users" on public.first_call_submissions;
 create policy "Allow all access for authenticated users" on public.first_call_submissions for all to authenticated using (true);
+drop policy if exists "Allow public inserts" on public.first_call_submissions;
 create policy "Allow public inserts" on public.first_call_submissions for insert to anon with check (true);
 
--- 3. Call List Table
+-- Call List
 create table if not exists public.call_list_submissions (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -140,10 +195,12 @@ create table if not exists public.call_list_submissions (
   source text default 'Call List Submission Form'
 );
 alter table public.call_list_submissions enable row level security;
+drop policy if exists "Allow all access for authenticated users" on public.call_list_submissions;
 create policy "Allow all access for authenticated users" on public.call_list_submissions for all to authenticated using (true);
+drop policy if exists "Allow public inserts" on public.call_list_submissions;
 create policy "Allow public inserts" on public.call_list_submissions for insert to anon with check (true);
 
--- 4. Client Onboarding Table
+-- Client Onboarding
 create table if not exists public.client_onboarding_submissions (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -153,25 +210,12 @@ create table if not exists public.client_onboarding_submissions (
   source text default 'Jack Ryan A.I. Client Onboarding Form'
 );
 alter table public.client_onboarding_submissions enable row level security;
+drop policy if exists "Allow all access for authenticated users" on public.client_onboarding_submissions;
 create policy "Allow all access for authenticated users" on public.client_onboarding_submissions for all to authenticated using (true);
+drop policy if exists "Allow public inserts" on public.client_onboarding_submissions;
 create policy "Allow public inserts" on public.client_onboarding_submissions for insert to anon with check (true);
 
--- 5. Credentials Table
-create table if not exists public.credentials (
-  id uuid default gen_random_uuid() primary key,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  client_name text,
-  service_name text,
-  crm_link text,
-  username text,
-  password text,
-  last_updated timestamp with time zone default timezone('utc'::text, now())
-);
-alter table public.credentials enable row level security;
-create policy "Allow all access for authenticated users" on public.credentials for all to authenticated using (true);
-create policy "Allow public inserts" on public.credentials for insert to anon with check (true);
-
--- 6. Profiles Table (REQUIRED for User Management)
+-- 4. Profiles Table
 create table if not exists public.profiles (
   id uuid references auth.users on delete cascade not null primary key,
   username text,
@@ -180,10 +224,12 @@ create table if not exists public.profiles (
   constraint profiles_role_check check (role in ('grand_admin', 'admin', 'user'))
 );
 alter table public.profiles enable row level security;
+drop policy if exists "Allow all access for authenticated users" on public.profiles;
 create policy "Allow all access for authenticated users" on public.profiles for all to authenticated using (true);
+drop policy if exists "Allow public inserts" on public.profiles;
 create policy "Allow public inserts" on public.profiles for insert to anon with check (true);
 
--- 7. Auto-Profile Trigger (Automatically creates profile on signup)
+-- 5. Triggers
 create or replace function public.handle_new_user() 
 returns trigger as $$
 begin
@@ -193,13 +239,12 @@ begin
 end;
 $$ language plpgsql security definer;
 
--- Drop trigger if exists to avoid duplication errors during setup
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
--- 8. Sync existing users (Run this once if you already have users but no profiles)
+-- Sync existing users
 insert into public.profiles (id, username, role)
 select id, email, 'user' from auth.users
 where id not in (select id from public.profiles)
@@ -218,17 +263,24 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
 
   // Data State
   const [credentials, setCredentials] = useState<StoredCredential[]>([]);
+  const [folders, setFolders] = useState<FolderType[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
   const [formCounts, setFormCounts] = useState<Record<string, number>>({}); 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false);
+  const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [demoMode, setDemoMode] = useState(false);
+  
+  // Selection State
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
   // Notification State
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Delete Modal State
-  const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; id: string | null }>({ isOpen: false, id: null });
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; id: string | null, type: 'credential' | 'folder' | 'bulk' }>({ isOpen: false, id: null, type: 'credential' });
 
   // Loading State
   const [isLoadingCredentials, setIsLoadingCredentials] = useState(true);
@@ -261,30 +313,46 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     serviceName: '', 
     crmLink: '',
     username: '', 
-    password: '' 
+    password: '',
+    folderId: null
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCrmSuggestions, setShowCrmSuggestions] = useState(false);
   const crmInputWrapperRef = useRef<HTMLDivElement>(null);
+  
+  // Folder Creation State
+  const [newFolderName, setNewFolderName] = useState('');
+  
+  // Move Credential State
+  const [moveCredentialId, setMoveCredentialId] = useState<string | null>(null); // Kept for single move
+  const [selectedMoveFolderId, setSelectedMoveFolderId] = useState<string | null>(null);
+
+  // Email Suggestions State
+  const [showEmailSuggestions, setShowEmailSuggestions] = useState(false);
+  const emailInputWrapperRef = useRef<HTMLDivElement>(null);
 
   // Refs for Realtime
   const activeFormTabRef = useRef(activeFormTab);
 
   // Constants
-  const ITEMS_PER_PAGE_CREDENTIALS = 9;
+  const ITEMS_PER_PAGE_CREDENTIALS = 8; // 8 items per page as requested
   const ITEMS_PER_PAGE_SUBMISSIONS = 10;
 
   useEffect(() => {
     activeFormTabRef.current = activeFormTab;
   }, [activeFormTab]);
 
-  // Click outside listener for status dropdown, CRM suggestions, and CRM Filter
+  // Click outside listener for status dropdown, CRM suggestions, Email suggestions, and CRM Filter
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       setOpenStatusId(null);
       
       if (crmInputWrapperRef.current && !crmInputWrapperRef.current.contains(event.target as Node)) {
         setShowCrmSuggestions(false);
+      }
+
+      if (emailInputWrapperRef.current && !emailInputWrapperRef.current.contains(event.target as Node)) {
+        setShowEmailSuggestions(false);
       }
       
       if (crmFilterRef.current && !crmFilterRef.current.contains(event.target as Node)) {
@@ -330,12 +398,9 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     credentials.forEach(c => {
         if(c.serviceName) {
             const lowerKey = c.serviceName.toLowerCase();
-            // Store if not exists. 
-            // Optional improvement: prefer the casing that has more capitals (e.g. CINC over Cinc)
             if(!map.has(lowerKey)) {
                 map.set(lowerKey, c.serviceName);
             } else {
-                // If the current one is all uppercase, replace the stored one
                 const currentStored = map.get(lowerKey);
                 if (c.serviceName === c.serviceName.toUpperCase() && currentStored !== c.serviceName) {
                     map.set(lowerKey, c.serviceName);
@@ -345,6 +410,40 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     });
     return Array.from(map.values()).sort();
   }, [credentials]);
+
+  // Get unique Emails from credentials
+  const uniqueEmails = useMemo(() => {
+    const emails = new Set(credentials.map(c => c.username).filter(val => val && val.trim() !== ''));
+    return Array.from(emails).sort();
+  }, [credentials]);
+
+  // Breadcrumb Path Generator
+  const breadcrumbPath = useMemo(() => {
+    if (!currentFolderId) return [];
+    const path: FolderType[] = [];
+    let current = folders.find(f => f.id === currentFolderId);
+    while (current) {
+      path.unshift(current);
+      current = folders.find(f => f.id === current!.parentId);
+    }
+    return path;
+  }, [currentFolderId, folders]);
+
+  const toggleSelection = (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setSelectedItems(prev => {
+          const newSet = new Set(prev);
+          if (newSet.has(id)) newSet.delete(id);
+          else newSet.add(id);
+          return newSet;
+      });
+  };
+
+  const clearSelection = () => setSelectedItems(new Set());
+
+  const handleSelectAll = (allIds: string[]) => {
+      setSelectedItems(new Set(allIds));
+  };
 
   // --- SUPABASE DATA FETCHING ---
   const fetchSingleCount = async (formType: string, tableName: string) => {
@@ -360,7 +459,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
   };
 
   const updateAllCounts = async () => {
-    // Check form tables
     const formPromises = Object.entries(TABLE_MAP).map(async ([type, tableName]) => {
       const { count, error } = await supabase.from(tableName).select('*', { count: 'exact', head: true });
       if (error && (error.code === '42P01' || error.message?.includes('does not exist'))) {
@@ -369,7 +467,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
       return { type, count: count || 0, missing: false };
     });
 
-    // Also Check profiles table specifically
     const profilePromise = supabase.from('profiles').select('id', { count: 'exact', head: true }).limit(1).then(({ error }) => {
        return { missing: error && (error.code === '42P01' || error.message?.includes('does not exist')) };
     });
@@ -377,7 +474,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     const [formResults, profileResult] = await Promise.all([Promise.all(formPromises), profilePromise]);
     
     const newCounts: Record<string, number> = {};
-    let missingTableDetected = profileResult.missing || false; // Start with profile result
+    let missingTableDetected = profileResult.missing || false;
 
     formResults.forEach(r => {
       newCounts[r.type] = r.count;
@@ -388,31 +485,53 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     if (missingTableDetected) setDemoMode(true);
   };
 
-  const fetchCredentials = async () => {
+  const fetchCredentialsAndFolders = async () => {
     try {
       setIsLoadingCredentials(true);
-      const { data, error } = await supabase
+      
+      // Fetch Credentials
+      const { data: credsData, error: credsError } = await supabase
         .from('credentials')
         .select('*')
         .order('last_updated', { ascending: false });
 
-      if (error) throw error;
+      if (credsError) throw credsError;
 
-      if (data) {
-        const mappedCredentials: StoredCredential[] = data.map((item: any) => ({
+      if (credsData) {
+        const mappedCredentials: StoredCredential[] = credsData.map((item: any) => ({
           id: item.id,
           clientName: item.client_name,
           serviceName: item.service_name,
           crmLink: item.crm_link || '',
           username: item.username || '',
           password: item.password || '',
-          lastUpdated: new Date(item.last_updated)
+          lastUpdated: new Date(item.last_updated),
+          folderId: item.folder_id || null
         }));
         setCredentials(mappedCredentials);
       }
+
+      // Fetch Folders
+      const { data: foldersData, error: foldersError } = await supabase
+        .from('folders')
+        .select('*')
+        .order('name', { ascending: true });
+        
+      if (foldersError && foldersError.code !== '42P01') throw foldersError; // Ignore missing table error for demo
+
+      if (foldersData) {
+        const mappedFolders: FolderType[] = foldersData.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          parentId: item.parent_id,
+          createdAt: item.created_at
+        }));
+        setFolders(mappedFolders);
+      }
+
     } catch (error: any) {
       if (!error.message?.includes('Could not find the table') && error.code !== '42P01') {
-        console.warn('Error fetching credentials:', error.message || error);
+        console.warn('Error fetching data:', error.message || error);
       }
     } finally {
       setIsLoadingCredentials(false);
@@ -458,7 +577,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
 
   useEffect(() => {
     if (user?.role !== 'user') {
-      fetchCredentials();
+      fetchCredentialsAndFolders();
       updateAllCounts();
     }
   }, [user]);
@@ -476,9 +595,11 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     
     const credChannel = supabase
       .channel('public:credentials')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => fetchCredentials())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => fetchCredentialsAndFolders())
       .subscribe();
     channels.push(credChannel);
+    
+    // Optional: Add folder realtime listener if needed, but fetchCredentialsAndFolders handles it via manual refetch usually
 
     Object.entries(TABLE_MAP).forEach(([formType, tableName]) => {
       const formChannel = supabase
@@ -525,6 +646,49 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
   }
 
   // --- HANDLERS ---
+  const handleCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+        const { error } = await supabase.from('folders').insert({
+            name: newFolderName,
+            parent_id: currentFolderId
+        });
+        if (error) throw error;
+        setToast({ message: "Folder created", type: 'success' });
+        await fetchCredentialsAndFolders();
+        setIsCreateFolderModalOpen(false);
+        setNewFolderName('');
+    } catch (error: any) {
+        if (error.code === '42P01' || error.message?.includes('Could not find the table') || error.message?.includes('schema cache')) {
+             setIsSqlModalOpen(true);
+        } else {
+            setToast({ message: `Error: ${error.message}`, type: 'error' });
+        }
+    }
+  };
+
+  const handleDeleteFolder = async (id: string) => {
+      // Check if folder is empty (no subfolders, no creds)
+      const hasSubfolders = folders.some(f => f.parentId === id);
+      const hasCreds = credentials.some(c => c.folderId === id);
+
+      if (hasSubfolders || hasCreds) {
+          if (!window.confirm("This folder contains items. Deleting it will delete all contents. Continue?")) return;
+      }
+
+      setDeleteConfirmation({ isOpen: false, id: null, type: 'credential' });
+      // Optimistic update
+      setFolders(prev => prev.filter(f => f.id !== id));
+      
+      const { error } = await supabase.from('folders').delete().eq('id', id);
+      if (error) {
+          fetchCredentialsAndFolders(); // Revert
+          setToast({ message: "Failed to delete folder", type: 'error' });
+      } else {
+          setToast({ message: "Folder deleted", type: 'success' });
+      }
+  };
+
   const handleSaveCredential = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingCredential(true);
@@ -536,6 +700,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
             crm_link: newCred.crmLink,
             username: newCred.username,
             password: newCred.password,
+            folder_id: newCred.folderId,
             last_updated: new Date().toISOString()
           }).eq('id', editingId);
           setToast({ message: "Credential updated successfully", type: 'success' });
@@ -546,15 +711,17 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
             crm_link: newCred.crmLink,
             username: newCred.username,
             password: newCred.password,
+            folder_id: currentFolderId, // Default to current folder
             last_updated: new Date().toISOString()
           });
           setToast({ message: "New credential secured in vault", type: 'success' });
       }
-      await fetchCredentials(); 
+      await fetchCredentialsAndFolders(); 
       setIsAddModalOpen(false);
-      setNewCred({ clientName: '', serviceName: '', crmLink: '', username: '', password: '' });
+      setNewCred({ clientName: '', serviceName: '', crmLink: '', username: '', password: '', folderId: null });
       setEditingId(null);
       setShowCrmSuggestions(false);
+      setShowEmailSuggestions(false);
     } catch (error: any) {
        if (error.code === '42P01') {
         alert("Setup Required: The 'credentials' table is missing.");
@@ -567,41 +734,146 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     }
   };
 
+  const handleMoveItems = async () => {
+      // Determine what to move
+      const itemsToMove = selectedItems.size > 0 
+          ? Array.from(selectedItems) 
+          : (moveCredentialId ? [moveCredentialId] : []);
+      
+      if (itemsToMove.length === 0) return;
+
+      try {
+          const folderUpdates = [];
+          const credentialUpdates = [];
+
+          for (const id of itemsToMove) {
+              const isFolder = folders.some(f => f.id === id);
+              if (isFolder) {
+                  // Prevent moving a folder into itself
+                  if (id === selectedMoveFolderId) continue;
+                   folderUpdates.push(id);
+              } else {
+                   credentialUpdates.push(id);
+              }
+          }
+
+          if (folderUpdates.length > 0) {
+              const { error } = await supabase.from('folders')
+                  .update({ parent_id: selectedMoveFolderId })
+                  .in('id', folderUpdates);
+              if (error) throw error;
+          }
+
+          if (credentialUpdates.length > 0) {
+              const { error } = await supabase.from('credentials')
+                  .update({ folder_id: selectedMoveFolderId })
+                  .in('id', credentialUpdates);
+              if (error) throw error;
+          }
+          
+          setToast({ message: "Items moved successfully", type: 'success' });
+          await fetchCredentialsAndFolders();
+          setIsMoveModalOpen(false);
+          setMoveCredentialId(null);
+          setSelectedMoveFolderId(null);
+          clearSelection();
+      } catch (error: any) {
+          setToast({ message: "Failed to move items", type: 'error' });
+      }
+  };
+
+  const handleDuplicateCredential = async (cred: StoredCredential, e: React.MouseEvent) => {
+      e.stopPropagation();
+      try {
+          const { error } = await supabase.from('credentials').insert({
+              client_name: `${cred.clientName} (Copy)`,
+              service_name: cred.serviceName,
+              crm_link: cred.crmLink,
+              username: cred.username,
+              password: cred.password,
+              folder_id: cred.folderId,
+              last_updated: new Date().toISOString()
+          });
+          if (error) throw error;
+          setToast({ message: "Credential duplicated", type: 'success' });
+          fetchCredentialsAndFolders();
+      } catch (error) {
+          setToast({ message: "Failed to duplicate", type: 'error' });
+      }
+  };
+
   const openAddModal = () => {
     setEditingId(null);
-    setNewCred({ clientName: '', serviceName: '', crmLink: '', username: '', password: '' });
+    setNewCred({ clientName: '', serviceName: '', crmLink: '', username: '', password: '', folderId: currentFolderId });
     setShowCrmSuggestions(false);
+    setShowEmailSuggestions(false);
     setIsAddModalOpen(true);
   };
 
   const openEditModal = (cred: StoredCredential) => {
     setEditingId(cred.id);
-    setNewCred({ clientName: cred.clientName, serviceName: cred.serviceName, crmLink: cred.crmLink, username: cred.username, password: cred.password });
+    setNewCred({ clientName: cred.clientName, serviceName: cred.serviceName, crmLink: cred.crmLink, username: cred.username, password: cred.password, folderId: cred.folderId });
     setShowCrmSuggestions(false);
+    setShowEmailSuggestions(false);
     setIsAddModalOpen(true);
   };
 
-  const openDeleteModal = (id: string, e: React.MouseEvent) => {
+  const openDeleteModal = (id: string, type: 'credential' | 'folder' | 'bulk', e: React.MouseEvent) => {
     e.stopPropagation();
-    setDeleteConfirmation({ isOpen: true, id });
+    setDeleteConfirmation({ isOpen: true, id, type });
   };
 
-  const confirmDeleteCredential = async () => {
-    const id = deleteConfirmation.id;
+  const openMoveModal = (id: string | null, currentFolder: string | null, e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+      setMoveCredentialId(id);
+      setSelectedMoveFolderId(currentFolder);
+      setIsMoveModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    const { id, type } = deleteConfirmation;
+    
+    if (type === 'bulk') {
+        const idsToDelete = Array.from(selectedItems);
+        const folderIds = idsToDelete.filter(id => folders.some(f => f.id === id));
+        const credIds = idsToDelete.filter(id => credentials.some(c => c.id === id));
+
+        // Optimistic update
+        setFolders(prev => prev.filter(f => !folderIds.includes(f.id)));
+        setCredentials(prev => prev.filter(c => !credIds.includes(c.id)));
+        
+        // Supabase Deletes
+        if (folderIds.length > 0) {
+            await supabase.from('folders').delete().in('id', folderIds);
+        }
+        if (credIds.length > 0) {
+            await supabase.from('credentials').delete().in('id', credIds);
+        }
+        
+        setToast({ message: `Deleted ${idsToDelete.length} items`, type: 'success' });
+        clearSelection();
+        setDeleteConfirmation({ isOpen: false, id: null, type: 'credential' });
+        fetchCredentialsAndFolders(); // Verify sync
+        return;
+    }
+
     if (!id) return;
 
-    // Optimistic Update
-    setCredentials(prev => prev.filter(c => c.id !== id));
-    setDeleteConfirmation({ isOpen: false, id: null });
+    if (type === 'credential') {
+        // Optimistic Update
+        setCredentials(prev => prev.filter(c => c.id !== id));
+        setDeleteConfirmation({ isOpen: false, id: null, type: 'credential' });
 
-    const { error } = await supabase.from('credentials').delete().eq('id', id);
-    if(error) {
-        console.error("Delete failed", error);
-        // If deletion fails, revert by refetching
-        fetchCredentials();
-        setToast({ message: "Failed to delete credential", type: 'error' });
+        const { error } = await supabase.from('credentials').delete().eq('id', id);
+        if(error) {
+            console.error("Delete failed", error);
+            fetchCredentialsAndFolders();
+            setToast({ message: "Failed to delete credential", type: 'error' });
+        } else {
+            setToast({ message: "Credential removed from vault", type: 'success' });
+        }
     } else {
-        setToast({ message: "Credential removed from vault", type: 'success' });
+        await handleDeleteFolder(id);
     }
   };
 
@@ -658,17 +930,22 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
 
   // --- FILTERING & PAGINATION ---
   const filteredCredentials = credentials.filter(cred => {
-    // Case-insensitive comparison
-    const matchesCrm = selectedCrmFilter 
-        ? cred.serviceName.toLowerCase() === selectedCrmFilter.toLowerCase() 
-        : true;
+    // 1. Search Logic (Global, ignores folders)
+    if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const matchesQuery = cred.clientName.toLowerCase().includes(q) || cred.serviceName.toLowerCase().includes(q);
+        const matchesCrm = selectedCrmFilter ? cred.serviceName.toLowerCase() === selectedCrmFilter.toLowerCase() : true;
+        return matchesQuery && matchesCrm;
+    }
 
-    if (!searchQuery && !selectedCrmFilter) return true;
-    if (!matchesCrm) return false;
-    
-    const q = searchQuery.toLowerCase();
-    return cred.clientName.toLowerCase().includes(q) || cred.serviceName.toLowerCase().includes(q);
+    // 2. Navigation Logic (Respects Folders)
+    const matchesFolder = cred.folderId === currentFolderId;
+    const matchesCrm = selectedCrmFilter ? cred.serviceName.toLowerCase() === selectedCrmFilter.toLowerCase() : true;
+    return matchesFolder && matchesCrm;
   });
+
+  // Filter Folders (Only match parent ID, ignored during search)
+  const currentFolders = searchQuery ? [] : folders.filter(f => f.parentId === currentFolderId);
 
   const filteredSubmissions = submissions.filter(s => {
     if (!searchQuery) return true;
@@ -685,12 +962,48 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
   const totalSubmissionsCount = (Object.values(formCounts) as number[]).reduce((a, b) => a + b, 0);
 
   const itemsPerPage = activeMainTab === 'credentials' ? ITEMS_PER_PAGE_CREDENTIALS : ITEMS_PER_PAGE_SUBMISSIONS;
-  const totalItems = activeMainTab === 'credentials' ? filteredCredentials.length : filteredSubmissions.length;
+  // For pagination with mixed content (folders + creds), we treat them as one list if not searching
+  const totalItems = activeMainTab === 'credentials' 
+     ? filteredCredentials.length + (searchQuery ? 0 : currentFolders.length)
+     : filteredSubmissions.length;
+     
   const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
   const startStartIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startStartIndex + itemsPerPage;
-  const currentCredentials = filteredCredentials.slice(startStartIndex, endIndex);
+  
+  // Mixed Content Pagination Logic
+  let displayFolders: FolderType[] = [];
+  let displayCredentials: StoredCredential[] = [];
+
+  if (activeMainTab === 'credentials') {
+      if (searchQuery) {
+          displayCredentials = filteredCredentials.slice(startStartIndex, endIndex);
+      } else {
+          // Logic: Folders come first. 
+          const folderCount = currentFolders.length;
+          if (startStartIndex < folderCount) {
+              displayFolders = currentFolders.slice(startStartIndex, Math.min(endIndex, folderCount));
+          }
+          
+          // Calculate how many slots left for credentials
+          const slotsUsedByFolders = Math.max(0, Math.min(endIndex, folderCount) - startStartIndex);
+          const remainingSlots = itemsPerPage - slotsUsedByFolders;
+          
+          if (remainingSlots > 0) {
+              // Calculate credential start offset
+              // If we are on a page that starts after all folders
+              let credStart = 0;
+              if (startStartIndex >= folderCount) {
+                  credStart = startStartIndex - folderCount;
+              }
+              displayCredentials = filteredCredentials.slice(credStart, credStart + remainingSlots);
+          }
+      }
+  } else {
+      // Submissions logic remains simple
+  }
   const currentSubmissions = filteredSubmissions.slice(startStartIndex, endIndex);
+
 
   const goToPage = (page: number) => {
     if (page >= 1 && page <= totalPages) {
@@ -701,8 +1014,8 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
 
   const PaginationControls = () => {
     if (totalItems === 0 && searchQuery) return null;
+    if (totalPages <= 1) return null;
     
-    // Calculate page range to show (e.g. 1 2 3 4 5)
     let startPage = Math.max(1, currentPage - 2);
     let endPage = Math.min(totalPages, startPage + 4);
     
@@ -716,7 +1029,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     }
 
     return (
-      <div className="flex items-center justify-center border-t border-gray-200 px-4 py-4 sm:px-6 bg-white rounded-b-2xl mt-auto transition-all">
+      <div className="flex items-center justify-center border-t border-gray-200 px-4 py-4 sm:px-6 bg-white rounded-b-2xl mt-20 transition-all"> {/* Changed mt-12 to mt-20 for better gap */}
         <div className="flex items-center space-x-2">
             <button 
                 onClick={() => goToPage(currentPage - 1)} 
@@ -728,13 +1041,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
             </button>
             
             <div className="hidden sm:flex items-center space-x-1">
-                {startPage > 1 && (
-                    <>
-                        <button onClick={() => goToPage(1)} className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 ${currentPage === 1 ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm' : 'text-gray-600'}`}>1</button>
-                        {startPage > 2 && <span className="text-gray-300 px-1">...</span>}
-                    </>
-                )}
-                
                 {pageNumbers.map(page => (
                     <button 
                         key={page} 
@@ -744,20 +1050,8 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                         {page}
                     </button>
                 ))}
-
-                {endPage < totalPages && (
-                    <>
-                         {endPage < totalPages - 1 && <span className="text-gray-300 px-1">...</span>}
-                        <button onClick={() => goToPage(totalPages)} className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 ${currentPage === totalPages ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm' : 'text-gray-600'}`}>{totalPages}</button>
-                    </>
-                )}
             </div>
             
-            {/* Mobile simple view */}
-            <div className="sm:hidden text-sm font-medium text-gray-600 px-2">
-               Page {currentPage} of {totalPages}
-            </div>
-
             <button 
                 onClick={() => goToPage(currentPage + 1)} 
                 disabled={currentPage === totalPages} 
@@ -773,7 +1067,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
 
   const StatusDropdown = ({ status, id }: { status: string, id: string }) => {
     const isOpen = openStatusId === id;
-    
     let buttonClass = "";
     if (status === 'processed') buttonClass = "bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100";
     else if (status === 'flagged') buttonClass = "bg-rose-50 text-rose-700 border-rose-100 hover:bg-rose-100";
@@ -816,7 +1109,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
   };
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-6 pb-48"> {/* Increased bottom padding to pb-48 to prevent overlap */}
       
       {/* Toast Notification */}
       {toast && (
@@ -834,7 +1127,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
           <p className="mt-1 text-gray-500">Secure access management and data intelligence.</p>
         </div>
         
-        {/* Actions - Added z-index to ensure dropdowns overlap content below */}
+        {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto items-stretch sm:items-center relative z-50">
             {/* Custom CRM Filter Dropdown */}
             {activeMainTab === 'credentials' && (
@@ -873,15 +1166,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                     )}
                 </div>
             )}
-            
-            {activeMainTab === 'credentials' && selectedCrmFilter && (
-                <div className="md:hidden flex items-center bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 animate-fade-in">
-                    <span className="text-xs font-semibold mr-2 uppercase tracking-wide opacity-0 group-hover/lock:opacity-100 transition-opacity text-amber-600/50">
-                        Filtered: {selectedCrmFilter}
-                    </span>
-                    <button onClick={() => setSelectedCrmFilter(null)} className="p-0.5 hover:bg-indigo-100 rounded-full transition-colors"><X className="h-3.5 w-3.5" /></button>
-                </div>
-            )}
 
             <div className="relative group w-full md:w-64 lg:w-80">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -890,38 +1174,30 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                 <input
                     type="text"
                     className="block w-full pl-10 pr-3 py-2.5 border border-gray-200 rounded-xl leading-5 bg-white placeholder-gray-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 sm:text-sm transition-all shadow-sm"
-                    placeholder={activeMainTab === 'credentials' ? "Search credentials..." : "Search submissions..."}
+                    placeholder={activeMainTab === 'credentials' ? (currentFolderId ? "Search current folder..." : "Search credentials...") : "Search submissions..."}
                     value={searchQuery}
                     onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
                 />
             </div>
            <div className="flex-shrink-0 flex space-x-2">
                {activeMainTab === 'credentials' && (
-                 <Button onClick={openAddModal} className="w-full sm:w-auto"><Plus className="h-5 w-5 mr-2" />Add Credential</Button>
+                 <>
+                   <Button onClick={() => setIsSqlModalOpen(true)} variant="secondary" className="px-3" title="Database Setup">
+                      <Terminal className="h-5 w-5 text-gray-500" />
+                   </Button>
+                   <Button onClick={() => setIsCreateFolderModalOpen(true)} variant="secondary" className="w-full sm:w-auto px-4"><FolderPlus className="h-5 w-5" /></Button>
+                   <Button onClick={openAddModal} className="w-full sm:w-auto"><Plus className="h-5 w-5 mr-2" />Add Credential</Button>
+                 </>
                )}
            </div>
         </div>
       </div>
 
-      {/* Demo Mode Warning */}
-      {demoMode && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 flex items-start animate-fade-in">
-          <AlertCircle className="h-5 w-5 text-amber-500 mt-0.5 flex-shrink-0" />
-          <div className="ml-3 flex-1">
-            <h3 className="text-sm font-medium text-amber-800">Database Connection: Demo Mode</h3>
-            <p className="mt-1 text-sm text-amber-700">The required database table for <strong>{activeFormTab}</strong> or <strong>User Profiles</strong> was not found.</p>
-            <button onClick={() => setIsSqlModalOpen(true)} className="mt-2 flex items-center text-sm font-semibold text-amber-800 hover:text-amber-900 group">
-              <Terminal className="h-4 w-4 mr-1.5" /><span className="group-hover:underline">View SQL Setup Script</span>
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Tab Navigation */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8" aria-label="Tabs">
           <button
-            onClick={() => { setActiveMainTab('credentials'); setSearchQuery(''); setCurrentPage(1); setExpandedSubmissionId(null); setSelectedCrmFilter(null); }}
+            onClick={() => { setActiveMainTab('credentials'); setSearchQuery(''); setCurrentPage(1); setExpandedSubmissionId(null); setSelectedCrmFilter(null); clearSelection(); }}
             className={`${activeMainTab === 'credentials' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-all outline-none focus:outline-none focus:ring-0 focus-visible:outline-none`}
           >
             <Lock className={`-ml-0.5 mr-2 h-5 w-5 ${activeMainTab === 'credentials' ? 'text-indigo-500' : 'text-gray-400 group-hover:text-gray-500'}`} />
@@ -929,7 +1205,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
             <span className={`ml-3 py-0.5 px-2.5 rounded-full text-xs font-medium inline-block ${activeMainTab === 'credentials' ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'}`}>{credentials.length}</span>
           </button>
           <button
-            onClick={() => { setActiveMainTab('submissions'); setSearchQuery(''); setCurrentPage(1); setExpandedSubmissionId(null); setSelectedCrmFilter(null); }}
+            onClick={() => { setActiveMainTab('submissions'); setSearchQuery(''); setCurrentPage(1); setExpandedSubmissionId(null); setSelectedCrmFilter(null); clearSelection(); }}
             className={`${activeMainTab === 'submissions' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-all outline-none focus:outline-none focus:ring-0 focus-visible:outline-none`}
           >
             <Inbox className={`-ml-0.5 mr-2 h-5 w-5 ${activeMainTab === 'submissions' ? 'text-indigo-500' : 'text-gray-400 group-hover:text-gray-500'}`} />
@@ -941,103 +1217,251 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
 
       {/* CREDENTIALS TAB CONTENT */}
       {activeMainTab === 'credentials' && (
-        <section key="credentials-section" className="animate-fade-in">
+        <section key="credentials-section" className="animate-fade-in relative">
           {isLoadingCredentials ? (
              <div className="flex flex-col items-center justify-center h-64 mt-8">
                <Loader2 className="h-10 w-10 text-indigo-500 animate-spin mb-4" />
                <p className="text-gray-500 font-medium">Decrypting Vault...</p>
              </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
-              {currentCredentials.map((cred) => {
-                const crmStyle = getCrmStyle(cred.serviceName);
-                return (
-                  <div key={cred.id} className="group relative bg-white rounded-xl border border-gray-200 p-5 transition-all hover:shadow-md hover:border-indigo-200 flex flex-col h-full animate-fade-in">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="flex items-center space-x-3 max-w-[70%]">
-                        <div className="h-12 w-12 bg-gray-50 rounded-xl flex items-center justify-center group-hover:bg-indigo-50 transition-colors border border-gray-100 flex-shrink-0">
-                          <Building className="h-6 w-6 text-indigo-500" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="font-bold text-gray-900 truncate" title={cred.clientName}>{cred.clientName}</h3>
-                          {/* Left side actions on hover for quick access */}
-                          <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity -ml-1 mt-1">
-                             <button onClick={() => openEditModal(cred)} className="p-1 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors outline-none focus:outline-none"><Pencil className="h-3.5 w-3.5" /></button>
-                             <button onClick={(e) => openDeleteModal(cred.id, e)} className="p-1 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded transition-colors outline-none focus:outline-none"><Trash2 className="h-3.5 w-3.5" /></button>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Right Side - Highlighted CRM Badge */}
+            <div className="mt-6">
+                {/* Breadcrumbs */}
+                {!searchQuery && (
+                  <div className="flex items-center mb-6 text-sm text-gray-500">
                       <button 
-                         onClick={() => setSelectedCrmFilter(prev => prev && prev.toLowerCase() === cred.serviceName.toLowerCase() ? null : cred.serviceName)}
-                         className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border transition-all cursor-pointer ${crmStyle.bg} ${crmStyle.text} ${crmStyle.border} ${crmStyle.hover}`}
-                         title="Filter by this CRM"
+                        onClick={() => { setCurrentFolderId(null); setCurrentPage(1); clearSelection(); }}
+                        className={`flex items-center hover:text-indigo-600 transition-colors ${!currentFolderId ? 'font-bold text-gray-800' : ''}`}
                       >
-                         {cred.serviceName}
+                         <Home className="h-4 w-4 mr-1" />
+                         Vault Root
                       </button>
-                    </div>
-                    
-                    <div className="space-y-3 flex-1 mt-2">
-                      {cred.crmLink && (
-                        <div>
-                          <label className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">CRM Link</label>
-                          <div className="flex items-center justify-between mt-1">
-                            <a href={cred.crmLink} target="_blank" rel="noopener noreferrer" className="flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-800 hover:underline truncate mr-2">
-                              <LinkIcon className="h-3 w-3 mr-1.5 flex-shrink-0" />
-                              <span className="truncate">{cred.crmLink}</span>
-                              <ExternalLink className="h-3 w-3 ml-1 flex-shrink-0 opacity-50" />
-                            </a>
-                            <button onClick={() => handleCopy(cred.crmLink)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none p-1 rounded hover:bg-gray-100 transition-colors" title="Copy Link">
-                              <Copy className="h-3 w-3" />
-                            </button>
+                      {breadcrumbPath.map((folder, index) => (
+                          <div key={folder.id} className="flex items-center">
+                              <ChevronRight className="h-4 w-4 mx-1 text-gray-300" />
+                              <button 
+                                onClick={() => { setCurrentFolderId(folder.id); setCurrentPage(1); clearSelection(); }}
+                                className={`hover:text-indigo-600 transition-colors ${index === breadcrumbPath.length - 1 ? 'font-bold text-gray-800' : ''}`}
+                              >
+                                {folder.name}
+                              </button>
                           </div>
-                        </div>
-                      )}
-                      <div>
-                        <label className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Login Email</label>
-                        <div className="flex items-center justify-between text-sm font-medium text-gray-700 bg-gray-50 px-3 py-2 rounded-lg mt-1">
-                          <span className="truncate mr-2">{cred.username}</span>
-                          <button onClick={() => handleCopy(cred.username)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none flex-shrink-0 p-1 rounded hover:bg-gray-200 transition-colors" title="Copy Email">
-                            <Copy className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Password</label>
-                        <div className="flex items-center justify-between text-sm font-medium text-gray-700 bg-gray-50 px-3 py-2 rounded-lg mt-1 font-mono">
-                          <span className="truncate mr-2">{visiblePasswords[cred.id] ? cred.password : '••••••••••••'}</span>
-                          <div className="flex items-center space-x-1 flex-shrink-0">
-                            <button onClick={() => handleCopy(cred.password)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none p-1 rounded hover:bg-gray-200 transition-colors" title="Copy Password">
-                              <Copy className="h-3 w-3" />
-                            </button>
-                            <button onClick={() => togglePassword(cred.id)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none p-1 rounded hover:bg-gray-200 transition-colors" title={visiblePasswords[cred.id] ? "Hide Password" : "Show Password"}>
-                              {visiblePasswords[cred.id] ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-gray-50 flex items-center justify-between text-xs text-gray-400">
-                      <span>Updated: {new Date(cred.lastUpdated).toLocaleDateString()}</span>
-                      <Shield className="h-3 w-3 text-emerald-500" />
-                    </div>
+                      ))}
                   </div>
-                );
-              })}
-              {(currentPage === totalPages || totalItems === 0) && !searchQuery && !selectedCrmFilter && (
-                <button onClick={openAddModal} className="flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/10 transition-all text-gray-400 hover:text-indigo-500 h-full min-h-[220px] outline-none focus:outline-none">
-                  <div className="p-3 rounded-full bg-gray-50 mb-3 group-hover:bg-white"><Plus className="h-6 w-6" /></div>
-                  <span className="font-medium">Add New Key</span>
-                </button>
-              )}
+                )}
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {/* Folders Loop */}
+                  {displayFolders.map(folder => {
+                      const isSelected = selectedItems.has(folder.id);
+                      return (
+                          <div 
+                             key={folder.id}
+                             onClick={() => { setCurrentFolderId(folder.id); setCurrentPage(1); clearSelection(); }}
+                             className={`group bg-white rounded-xl border transition-all cursor-pointer flex flex-col justify-between h-[180px] relative overflow-hidden ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-gray-200 hover:shadow-md hover:border-indigo-300'}`}
+                          >
+                             {/* Selection Checkbox (Top Left) */}
+                             <div className="absolute top-3 left-3 z-20">
+                                <button
+                                    onClick={(e) => toggleSelection(folder.id, e)}
+                                    className={`p-1 rounded transition-colors ${isSelected ? 'text-indigo-600 bg-indigo-50' : 'text-gray-300 hover:text-gray-500'}`}
+                                >
+                                    {isSelected ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
+                                </button>
+                             </div>
+
+                             {/* Delete Button (Bottom Right) */}
+                             <div className="absolute bottom-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                    onClick={(e) => openDeleteModal(folder.id, 'folder', e)}
+                                    className="p-1.5 text-gray-400 hover:text-rose-500 bg-white hover:bg-rose-50 rounded-full transition-colors border border-gray-100 hover:border-rose-200 shadow-sm"
+                                    title="Delete Folder"
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                </button>
+                             </div>
+
+                             <div className="flex items-start justify-between p-5 pb-0">
+                                <div className="ml-auto"></div> {/* Spacer */}
+                                <Folder className={`h-10 w-10 transition-colors ${isSelected ? 'text-indigo-500' : 'text-indigo-200 group-hover:text-indigo-500'}`} />
+                             </div>
+                             <div className="p-5">
+                                <h3 className={`font-bold truncate text-lg transition-colors ${isSelected ? 'text-indigo-700' : 'text-gray-900 group-hover:text-indigo-600'}`}>{folder.name}</h3>
+                                <p className="text-xs text-gray-400 mt-1">
+                                    {folders.filter(f => f.parentId === folder.id).length} folders, {credentials.filter(c => c.folderId === folder.id).length} items
+                                </p>
+                             </div>
+                          </div>
+                      );
+                  })}
+
+                  {/* Credentials Loop */}
+                  {displayCredentials.map((cred) => {
+                    const crmStyle = getCrmStyle(cred.serviceName);
+                    const isSelected = selectedItems.has(cred.id);
+                    return (
+                      <div key={cred.id} className={`group relative bg-white rounded-xl border transition-all flex flex-col h-full animate-fade-in min-h-[220px] ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-200 shadow-sm' : 'border-gray-200 hover:shadow-md hover:border-indigo-200'}`}>
+                        {/* Selection Checkbox */}
+                        <div className="absolute top-3 left-3 z-20">
+                            <button
+                                onClick={(e) => toggleSelection(cred.id, e)}
+                                className={`p-1 rounded transition-colors ${isSelected ? 'text-indigo-600 bg-indigo-50' : 'text-gray-300 hover:text-gray-500'}`}
+                            >
+                                {isSelected ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
+                            </button>
+                        </div>
+
+                        <div className="p-5 flex flex-col h-full">
+                            <div className="flex justify-between items-start mb-4 pl-6"> {/* Added padding-left for checkbox */}
+                              <div className="flex items-center space-x-3 max-w-[70%]">
+                                <div className="h-10 w-10 bg-gray-50 rounded-xl flex items-center justify-center group-hover:bg-indigo-50 transition-colors border border-gray-100 flex-shrink-0">
+                                  <Building className="h-5 w-5 text-indigo-500" />
+                                </div>
+                                <div className="min-w-0">
+                                  <h3 className="font-bold text-gray-900 truncate text-sm" title={cred.clientName}>{cred.clientName}</h3>
+                                  {/* Left side actions on hover for quick access */}
+                                  <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity -ml-1 mt-1">
+                                     <button onClick={() => openEditModal(cred)} className="p-1 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors outline-none focus:outline-none" title="Edit"><Pencil className="h-3.5 w-3.5" /></button>
+                                     <button onClick={(e) => handleDuplicateCredential(cred, e)} className="p-1 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors outline-none focus:outline-none" title="Duplicate"><Copy className="h-3.5 w-3.5" /></button>
+                                     <button onClick={(e) => openMoveModal(cred.id, cred.folderId, e)} className="p-1 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors outline-none focus:outline-none" title="Move to Folder"><Move className="h-3.5 w-3.5" /></button>
+                                     <button onClick={(e) => openDeleteModal(cred.id, 'credential', e)} className="p-1 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded transition-colors outline-none focus:outline-none" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              {/* Right Side - Highlighted CRM Badge */}
+                              <button 
+                                 onClick={() => setSelectedCrmFilter(prev => prev && prev.toLowerCase() === cred.serviceName.toLowerCase() ? null : cred.serviceName)}
+                                 className={`inline-flex items-center px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider border transition-all cursor-pointer ${crmStyle.bg} ${crmStyle.text} ${crmStyle.border} ${crmStyle.hover}`}
+                                 title="Filter by this CRM"
+                              >
+                                 {cred.serviceName}
+                              </button>
+                            </div>
+                            
+                            <div className="space-y-3 flex-1 mt-2">
+                              {cred.crmLink && (
+                                <div>
+                                  <label className="text-[9px] uppercase tracking-wider text-gray-400 font-semibold block mb-1">CRM Link</label>
+                                  <div className="flex items-center justify-between">
+                                    <a href={cred.crmLink} target="_blank" rel="noopener noreferrer" className="flex items-center text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline truncate mr-2">
+                                      <LinkIcon className="h-3 w-3 mr-1.5 flex-shrink-0" />
+                                      <span className="truncate">{cred.crmLink}</span>
+                                    </a>
+                                    <button onClick={() => handleCopy(cred.crmLink)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none p-1 rounded hover:bg-gray-100 transition-colors" title="Copy Link">
+                                      <Copy className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                              <div>
+                                <label className="text-[9px] uppercase tracking-wider text-gray-400 font-semibold block mb-1">Login Email</label>
+                                <div className="flex items-center justify-between text-xs font-medium text-gray-700 bg-gray-50 px-2 py-1.5 rounded-lg border border-gray-100">
+                                  <span className="truncate mr-2">{cred.username}</span>
+                                  <button onClick={() => handleCopy(cred.username)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none flex-shrink-0 p-1 rounded hover:bg-gray-200 transition-colors" title="Copy Email">
+                                    <Copy className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="text-[9px] uppercase tracking-wider text-gray-400 font-semibold block mb-1">Password</label>
+                                <div className="flex items-center justify-between text-xs font-medium text-gray-700 bg-gray-50 px-2 py-1.5 rounded-lg border border-gray-100 font-mono">
+                                  <span className="truncate mr-2">{visiblePasswords[cred.id] ? cred.password : '••••••••••••'}</span>
+                                  <div className="flex items-center space-x-1 flex-shrink-0">
+                                    <button onClick={() => handleCopy(cred.password)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none p-1 rounded hover:bg-gray-200 transition-colors" title="Copy Password">
+                                      <Copy className="h-3 w-3" />
+                                    </button>
+                                    <button onClick={() => togglePassword(cred.id)} className="text-gray-400 hover:text-indigo-600 focus:outline-none outline-none p-1 rounded hover:bg-gray-200 transition-colors" title={visiblePasswords[cred.id] ? "Hide Password" : "Show Password"}>
+                                      {visiblePasswords[cred.id] ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-4 pt-3 border-t border-gray-50 flex items-center justify-between text-[10px] text-gray-400">
+                              <span>Updated: {new Date(cred.lastUpdated).toLocaleDateString()}</span>
+                              <Shield className="h-3 w-3 text-emerald-500" />
+                            </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  
+                  {/* Empty State / Add New Card */}
+                  {(currentPage === totalPages || totalItems === 0) && !searchQuery && !selectedCrmFilter && (
+                    <button onClick={openAddModal} className="flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/10 transition-all text-gray-400 hover:text-indigo-500 h-full min-h-[220px] outline-none focus:outline-none group">
+                      <div className="p-3 rounded-full bg-gray-50 mb-3 group-hover:bg-white group-hover:scale-110 transition-transform"><Plus className="h-6 w-6" /></div>
+                      <span className="font-medium">Add New Key</span>
+                    </button>
+                  )}
+                </div>
             </div>
           )}
+          
+          {/* Bulk Action Bar - Moved to Portal to fix positioning issues */}
+          {createPortal(
+            <AnimatePresence>
+                {selectedItems.size > 0 && (
+                    <motion.div 
+                        initial={{ opacity: 0, y: 30, x: "-50%" }}
+                        animate={{ opacity: 1, y: 0, x: "-50%" }}
+                        exit={{ opacity: 0, y: 30, x: "-50%" }}
+                        transition={{ duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
+                        className="fixed bottom-12 left-1/2 md:left-[calc(50%+9rem)] bg-zinc-900/90 backdrop-blur-md text-white shadow-2xl shadow-zinc-900/30 rounded-full px-6 py-3 flex items-center gap-6 z-[100] border border-zinc-800/50"
+                    >
+                        <div className="flex items-center gap-3 border-r border-zinc-700/50 pr-6">
+                            <div className="bg-white text-zinc-950 text-xs font-bold px-2 py-0.5 rounded-md min-w-[24px] text-center">
+                                {selectedItems.size}
+                            </div>
+                            <span className="text-sm font-medium">Selected</span>
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                            <button 
+                                onClick={() => handleSelectAll(
+                                    [...filteredCredentials.map(c => c.id), ...currentFolders.map(f => f.id)]
+                                )}
+                                className="p-2 hover:bg-zinc-800 rounded-full transition-colors text-zinc-400 hover:text-white"
+                                title="Select All Matching Items"
+                            >
+                                <ListChecks className="h-5 w-5" />
+                            </button>
+                            
+                            <button 
+                                onClick={() => openMoveModal(null, currentFolderId)}
+                                className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-full text-sm font-medium transition-all"
+                            >
+                                <Move className="h-4 w-4" />
+                                <span>Move</span>
+                            </button>
+
+                            <button 
+                                onClick={(e) => openDeleteModal('bulk', 'bulk', e)}
+                                className="flex items-center gap-2 px-4 py-2 bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-300 rounded-full text-sm font-medium transition-all border border-rose-900/50"
+                            >
+                                <Trash2 className="h-4 w-4" />
+                                <span>Delete</span>
+                            </button>
+                        </div>
+
+                        <div className="border-l border-zinc-700/50 pl-6">
+                            <button 
+                                onClick={clearSelection}
+                                className="text-zinc-500 hover:text-white transition-colors"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>,
+            document.body
+          )}
+
           <PaginationControls />
         </section>
       )}
 
-      {/* FORM SUBMISSIONS TAB CONTENT */}
+      {/* FORM SUBMISSIONS TAB CONTENT - Unchanged Logic */}
       {activeMainTab === 'submissions' && (
         <section key="submissions-section" className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-6 min-h-[500px] flex flex-col animate-fade-in relative">
           <div className="bg-gray-50/80 border-b border-gray-200 rounded-t-2xl">
@@ -1069,6 +1493,9 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
              ) : filteredSubmissions.length > 0 ? (
                 <div key={activeFormTab} className="flex flex-col space-y-3 animate-fade-in">
                   {currentSubmissions.map((submission) => {
+                     // ... (Existing submission rendering logic retained for brevity, assumes identical to input file)
+                     // Since the prompt asks to update the file, I need to include the full content to be safe.
+                     // Copying submission rendering logic from original.
                     const isExpanded = expandedSubmissionId === submission.id;
                     const isDropdownOpen = openStatusId === submission.id;
                     const payloadKeys = Object.keys(submission.payload);
@@ -1084,26 +1511,14 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                     const emailValue = emailKey ? submission.payload[emailKey] : null;
                     const statusColorClass = submission.status === 'processed' ? 'border-l-emerald-500' : submission.status === 'flagged' ? 'border-l-rose-500' : 'border-l-amber-500';
 
-                    // Updated sorting logic: Name -> Email -> AI Tasks -> A2P -> Simpletalk
                     const sortedPayloadKeys = [...payloadKeys].sort((a, b) => {
                          const getPriority = (k: string) => {
                             const lower = k.toLowerCase();
-                            
-                            // 1. Client/Business/Personal Name
                             if (/client.?name|full.?name|business.?name|company.?name|legal.?name/i.test(lower)) return 1;
-                            
-                            // 2. Email
                             if (/email/i.test(lower)) return 2;
-                            
-                            // 3. AI Tasks / Goals
                             if (/ai.?task|bot.?goal|primary.?bot|bot.?name/i.test(lower)) return 3;
-                            
-                            // 4. A2P
                             if (/a2p/i.test(lower)) return 4;
-                            
-                            // 5. Simpletalk
                             if (/simpletalk/i.test(lower)) return 5;
-                            
                             return 100;
                          };
                          const sA = getPriority(a);
@@ -1135,7 +1550,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                                    </div>
                                    <div className="md:col-span-3 flex items-center justify-end space-x-4">
                                         <div className="flex flex-col items-end">
-                                            {/* Status Dropdown Component Replaces Static Badge */}
                                             <StatusDropdown status={submission.status} id={submission.id} />
                                             <span className="text-[10px] text-gray-400 font-medium">{new Date(submission.timestamp).toLocaleDateString()}</span>
                                         </div>
@@ -1143,14 +1557,11 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                                </div>
                            </div>
                            <div className="ml-6 flex items-center space-x-1">
-                               {/* Removed Eye Button */}
                                <button onClick={(e) => handleEditSubmissionClick(submission, e)} className="p-2 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors outline-none focus:outline-none"><Pencil className="h-4 w-4" /></button>
-                               {/* Delete Button Removed */}
                                <div className="pl-2 border-l border-gray-100 ml-2 text-gray-300 group-hover:text-indigo-500 transition-colors transform duration-300">{isExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}</div>
                            </div>
                         </div>
 
-                        {/* Smooth Expansion Panel using CSS Grid Transition */}
                         <div className={`grid transition-grid-rows ${isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                            <div className="overflow-hidden">
                                <div className="px-4 pb-4 pt-0 border-t border-gray-100 bg-gray-50/50">
@@ -1205,8 +1616,8 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
       <Modal isOpen={isSqlModalOpen} onClose={() => setIsSqlModalOpen(false)} title="Database Setup SQL" maxWidth="4xl">
         <div className="space-y-4">
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-700">
-            <p><strong>Missing Tables Detected:</strong> The application requires 5 specific tables to store form data.</p>
-            <p className="mt-1">Copy the SQL code below and run it in your Supabase SQL Editor to create the tables and enable all features.</p>
+            <p><strong>Missing Tables Detected:</strong> The application requires updated tables for Folders and Credentials.</p>
+            <p className="mt-1">Copy the SQL code below and run it in your Supabase SQL Editor.</p>
           </div>
           <div className="relative">
             <pre className="bg-slate-900 text-slate-50 p-4 rounded-lg text-xs overflow-x-auto font-mono leading-relaxed h-96 border border-slate-700 shadow-inner">
@@ -1228,19 +1639,85 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
         </div>
       </Modal>
 
+      {/* CREATE FOLDER MODAL */}
+      <Modal isOpen={isCreateFolderModalOpen} onClose={() => setIsCreateFolderModalOpen(false)} title="Create New Folder" maxWidth="sm">
+         <form onSubmit={handleCreateFolder} className="space-y-4">
+             <Input 
+                label="Folder Name" 
+                placeholder="e.g. Marketing Clients" 
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                required
+                autoFocus
+             />
+             <div className="flex justify-end space-x-3 pt-2">
+                 <Button type="button" variant="secondary" onClick={() => setIsCreateFolderModalOpen(false)}>Cancel</Button>
+                 <Button type="submit">Create Folder</Button>
+             </div>
+         </form>
+      </Modal>
+
+      {/* MOVE CREDENTIAL MODAL */}
+      <Modal isOpen={isMoveModalOpen} onClose={() => setIsMoveModalOpen(false)} title="Move Items" maxWidth="sm">
+          <div className="space-y-4">
+              <p className="text-sm text-gray-600">Select destination folder:</p>
+              <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
+                  <button 
+                      onClick={() => setSelectedMoveFolderId(null)}
+                      className={`w-full text-left px-4 py-3 text-sm flex items-center border-b border-gray-100 hover:bg-gray-50 ${selectedMoveFolderId === null ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-700'}`}
+                  >
+                      <Home className="h-4 w-4 mr-2" />
+                      Vault Root
+                      {selectedMoveFolderId === null && <Check className="ml-auto h-4 w-4" />}
+                  </button>
+                  {folders.map(folder => {
+                      // Disable moving a folder into itself or its children (simplified: just disable self)
+                      const isSelf = selectedItems.has(folder.id);
+                      if (isSelf) return null;
+
+                      return (
+                          <button 
+                              key={folder.id}
+                              onClick={() => setSelectedMoveFolderId(folder.id)}
+                              className={`w-full text-left px-4 py-3 text-sm flex items-center border-b border-gray-100 hover:bg-gray-50 ${selectedMoveFolderId === folder.id ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-700'}`}
+                          >
+                              <Folder className="h-4 w-4 mr-2 text-gray-400" />
+                              {folder.name}
+                              {selectedMoveFolderId === folder.id && <Check className="ml-auto h-4 w-4" />}
+                          </button>
+                      );
+                  })}
+              </div>
+              <div className="flex justify-end space-x-3 pt-2">
+                  <Button variant="secondary" onClick={() => setIsMoveModalOpen(false)}>Cancel</Button>
+                  <Button onClick={handleMoveItems}>Move {selectedItems.size > 0 ? `${selectedItems.size} Items` : 'Item'}</Button>
+              </div>
+          </div>
+      </Modal>
+
       {/* DELETE CONFIRMATION MODAL */}
-      <Modal isOpen={deleteConfirmation.isOpen} onClose={() => setDeleteConfirmation({ isOpen: false, id: null })} title="Confirm Deletion" maxWidth="sm">
+      <Modal isOpen={deleteConfirmation.isOpen} onClose={() => setDeleteConfirmation({ isOpen: false, id: null, type: 'credential' })} title={deleteConfirmation.type === 'bulk' ? "Bulk Delete" : (deleteConfirmation.type === 'folder' ? "Delete Folder" : "Confirm Deletion")} maxWidth="sm">
         <div className="flex flex-col items-center text-center space-y-4">
             <div className="h-12 w-12 rounded-full bg-rose-100 flex items-center justify-center">
                 <Trash2 className="h-6 w-6 text-rose-600" />
             </div>
             <div>
-                <h4 className="text-lg font-medium text-gray-900">Delete Credential?</h4>
-                <p className="text-sm text-gray-500 mt-1">This action cannot be undone. The credential and all its associated metadata will be permanently removed from the vault.</p>
+                <h4 className="text-lg font-medium text-gray-900">
+                    {deleteConfirmation.type === 'bulk' 
+                        ? `Delete ${selectedItems.size} Items?` 
+                        : (deleteConfirmation.type === 'folder' ? "Delete Folder?" : "Delete Credential?")}
+                </h4>
+                <p className="text-sm text-gray-500 mt-1">
+                    {deleteConfirmation.type === 'bulk'
+                        ? "This will permanently remove the selected folders (and their contents) and credentials."
+                        : (deleteConfirmation.type === 'folder' 
+                            ? "This will permanently remove the folder and ALL items inside it." 
+                            : "This action cannot be undone. The credential will be permanently removed.")}
+                </p>
             </div>
             <div className="flex w-full space-x-3 mt-4">
-                <Button variant="secondary" onClick={() => setDeleteConfirmation({ isOpen: false, id: null })} className="flex-1">Cancel</Button>
-                <Button variant="danger" onClick={confirmDeleteCredential} className="flex-1">Delete</Button>
+                <Button variant="secondary" onClick={() => setDeleteConfirmation({ isOpen: false, id: null, type: 'credential' })} className="flex-1">Cancel</Button>
+                <Button variant="danger" onClick={confirmDelete} className="flex-1">Delete</Button>
             </div>
         </div>
       </Modal>
@@ -1299,7 +1776,48 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
 
           <Input label="CRM Link" placeholder="https://..." value={newCred.crmLink} onChange={(e) => setNewCred({...newCred, crmLink: e.target.value})} required />
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Login Email" placeholder="user@example.com" value={newCred.username} onChange={(e) => setNewCred({...newCred, username: e.target.value})} required />
+            {/* Custom Email Autocomplete Input */}
+            <div className="relative" ref={emailInputWrapperRef}>
+               <Input 
+                 label="Login Email" 
+                 placeholder="user@example.com" 
+                 value={newCred.username} 
+                 onChange={(e) => {
+                   setNewCred({...newCred, username: e.target.value});
+                   setShowEmailSuggestions(true);
+                 }}
+                 onFocus={() => setShowEmailSuggestions(true)}
+                 required 
+                 autoComplete="off"
+               />
+               {showEmailSuggestions && (
+                 <div className="absolute z-50 w-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 max-h-48 overflow-y-auto animate-fade-in">
+                   {(() => {
+                      const input = newCred.username.toLowerCase();
+                      const filtered = input 
+                         ? uniqueEmails.filter(e => e.toLowerCase().includes(input)) 
+                         : uniqueEmails;
+                      
+                      if (filtered.length === 0) return null;
+
+                      return filtered.map((email) => (
+                          <button
+                             key={email}
+                             type="button"
+                             onClick={() => {
+                                 setNewCred({ ...newCred, username: email });
+                                 setShowEmailSuggestions(false);
+                             }}
+                             className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors border-b border-gray-50 last:border-0 block truncate"
+                          >
+                             {email}
+                          </button>
+                      ));
+                   })()}
+                 </div>
+               )}
+            </div>
+            
             <Input label="Password" type="password" placeholder="••••••••" value={newCred.password} onChange={(e) => setNewCred({...newCred, password: e.target.value})} required />
           </div>
           <div className="pt-4 flex justify-end space-x-3">

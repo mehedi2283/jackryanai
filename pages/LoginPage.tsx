@@ -1,8 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Shield, Fingerprint, ChevronRight, AlertTriangle, UserPlus, CheckCircle2, Eye, EyeOff } from 'lucide-react';
-import Input from '../components/Input';
-import Button from '../components/Button';
+import { useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Lock, 
+  ArrowRight, 
+  ScanLine, 
+  AlertCircle, 
+  Loader2, 
+  Fingerprint, 
+  Eye, 
+  EyeOff,
+  UserPlus
+} from 'lucide-react';
 import { supabase } from '../services/supabase';
 
 const LoginPage: React.FC = () => {
@@ -13,13 +22,26 @@ const LoginPage: React.FC = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   
+  // Mouse movement effect state
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
   const location = useLocation();
-  // navigate is available but we won't use it for dashboard redirection to avoid race conditions
-  const navigate = useNavigate();
 
   useEffect(() => {
-    // Check if redirected from Dashboard for creation (either via state or local storage flag)
+    // Handle mouse movement for background parallax effect
+    const handleMouseMove = (e: MouseEvent) => {
+      setMousePosition({
+        x: (e.clientX / window.innerWidth - 0.5) * 20, 
+        y: (e.clientY / window.innerHeight - 0.5) * 20,
+      });
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
+
+  useEffect(() => {
     const storedIntent = localStorage.getItem('jackryan_auth_intent');
     if (storedIntent === 'signup' || location.state?.mode === 'signup') {
       setIsSignUp(true);
@@ -35,215 +57,213 @@ const LoginPage: React.FC = () => {
 
     try {
       if (isSignUp) {
-        // Handle User Creation
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
         });
-
         if (signUpError) throw signUpError;
-
         if (data.user) {
-          setSuccessMessage('Identity established. You may now log in with your credentials.');
+          setSuccessMessage('Credentials created. Please log in.');
           setIsSignUp(false);
-          setEmail('');
           setPassword('');
-          setIsLoading(false); // Enable form for login
         }
       } else {
-        // Handle Login
-        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-
         if (signInError) throw signInError;
-
-        if (!data.session) {
-          throw new Error('Authentication failed. Please try again.');
-        }
-
-        // IMPORTANT: We do NOT navigate manually here.
-        // We leave isLoading(true). 
-        // The App component listens to supabase.auth.onAuthStateChange.
-        // When the session is set, App.tsx will update the 'user' state.
-        // This will cause the <Route> for Login to render <Navigate to={RoutePath.DASHBOARD} />.
-        // This prevents the race condition where we navigate before the parent App knows the user is logged in.
       }
-
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Authentication failed. Please check your credentials.');
-      setIsLoading(false); // Stop loading on error so user can retry
-      // Only sign out if we are in sign up mode to clean slate
-      if (isSignUp) await supabase.auth.signOut();
+      setError(err.message || 'Verification failed');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex relative overflow-hidden font-sans">
-      {/* Abstract Background */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-900/40 via-zinc-950 to-zinc-950 z-0"></div>
-      <div className="absolute -top-40 -right-40 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl animate-pulse"></div>
-      <div className="absolute top-1/2 -left-20 w-72 h-72 bg-indigo-600/10 rounded-full blur-3xl"></div>
+    <div className="min-h-screen w-full flex items-center justify-center bg-[#f0f0f0] relative overflow-hidden font-sans selection:bg-black selection:text-white px-6">
+        
+        {/* Animated Background Pattern */}
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none" 
+             style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
+        </div>
 
-      <div className="flex-1 flex flex-col justify-center py-12 px-4 sm:px-6 lg:flex-none lg:w-1/2 xl:w-5/12 z-10 relative">
-        <div className="mx-auto w-full max-w-sm lg:w-96">
-          <div className="mb-10">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="bg-indigo-600 p-2.5 rounded-xl shadow-lg shadow-indigo-500/20">
-                <Shield className="h-6 w-6 text-white" />
-              </div>
-              <span className="text-2xl font-bold tracking-tight text-white">JackRyanAI</span>
+        {/* Floating Orb */}
+        <motion.div 
+            animate={{ x: mousePosition.x * -2, y: mousePosition.y * -2 }}
+            transition={{ type: 'spring', damping: 50, stiffness: 400 }}
+            className="absolute top-1/4 left-1/4 w-96 h-96 bg-gradient-to-br from-gray-200 to-transparent rounded-full blur-3xl opacity-60 pointer-events-none"
+        />
+
+        <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+            className="w-full max-w-[400px] relative z-10 flex flex-col items-center"
+        >
+
+            {/* Circular Portal Icon */}
+            <div className="relative mb-12 group">
+                {/* Rotating Ring */}
+                <motion.div 
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                    className="absolute inset-[-12px] border border-dashed border-gray-300 rounded-full"
+                />
+                
+                {/* Active Ring */}
+                <motion.div 
+                    animate={{ rotate: isLoading || isFocused ? 360 : 0, scale: isLoading ? 1.1 : 1 }}
+                    transition={{ duration: isLoading ? 1 : 0.5, ease: isLoading ? "linear" : "backOut", repeat: isLoading ? Infinity : 0 }}
+                    className={`absolute inset-[-4px] border-2 border-t-black border-r-transparent border-b-black border-l-transparent rounded-full ${isLoading || isFocused ? 'opacity-100' : 'opacity-0'} transition-opacity duration-500`}
+                />
+
+                {/* Main Circle */}
+                <div className="w-24 h-24 bg-white rounded-full shadow-[0_20px_40px_-10px_rgba(0,0,0,0.1)] flex items-center justify-center relative z-10 overflow-hidden">
+                    <AnimatePresence mode="wait">
+                         {isLoading ? (
+                             <motion.div 
+                                key="scanning"
+                                initial={{ opacity: 0, scale: 0.5 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.5 }}
+                             >
+                                 <ScanLine className="text-black animate-pulse" size={32} strokeWidth={1.5} />
+                             </motion.div>
+                         ) : (
+                             <motion.div 
+                                key="locked"
+                                className="relative"
+                                whileHover={{ scale: 1.1 }}
+                             >
+                                <Lock className="text-black transition-transform duration-500" size={32} strokeWidth={1.5} />
+                             </motion.div>
+                         )}
+                    </AnimatePresence>
+                </div>
+
+                {/* Status Dot */}
+                <div className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-[#f0f0f0] z-20 transition-colors duration-500 ${error ? 'bg-red-500' : isLoading ? 'bg-blue-500' : 'bg-emerald-500'}`} />
             </div>
-            <h2 className="text-4xl font-extrabold text-white tracking-tight mb-3">
-              {isSignUp ? 'New Operative' : 'Restricted Access'}
-            </h2>
-            <p className="text-zinc-400">
-              {isSignUp ? 'Initialize a new secure identity.' : 'Authorized personnel only. All access attempts are monitored.'}
-            </p>
-          </div>
 
-          <div className="mt-8">
-            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-              <form className="space-y-6" onSubmit={handleAuth}>
-                <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-zinc-300 mb-1.5 ml-1">
-                    {isSignUp ? 'New Email Identity' : 'Operative ID (Email)'}
-                  </label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="agent@jackryan.ai"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="bg-zinc-800/80 border-zinc-700 !text-white placeholder-zinc-500 focus:ring-indigo-500/50 focus:border-indigo-500 focus:bg-zinc-800"
-                  />
-                </div>
+            <div className="text-center mb-10">
+                <h1 className="text-2xl font-medium text-gray-900 tracking-tight">
+                    {isSignUp ? 'New Identity' : 'System Access'}
+                </h1>
+                <p className="text-xs text-gray-400 mt-2 uppercase tracking-[0.2em] font-medium">
+                    {isSignUp ? 'Registration Protocol' : 'Verify Credentials'}
+                </p>
+            </div>
 
-                <div>
-                   <label htmlFor="password" className="block text-sm font-medium text-zinc-300 mb-1.5 ml-1">
-                    Passcode
-                  </label>
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    minLength={6}
-                    className="bg-zinc-800/80 border-zinc-700 !text-white placeholder-zinc-500 focus:ring-indigo-500/50 focus:border-indigo-500 focus:bg-zinc-800"
-                    suffix={
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="text-zinc-400 hover:text-white focus:outline-none transition-colors p-1"
-                        tabIndex={-1}
-                      >
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    }
-                  />
-                </div>
-
-                {error && (
-                  <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 flex items-start">
-                    <AlertTriangle className="h-5 w-5 text-rose-400 mt-0.5 flex-shrink-0" />
-                    <p className="ml-2 text-sm text-rose-300 font-medium">{error}</p>
-                  </div>
-                )}
-
-                {successMessage && (
-                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-start">
-                    <CheckCircle2 className="h-5 w-5 text-emerald-400 mt-0.5 flex-shrink-0" />
-                    <p className="ml-2 text-sm text-emerald-300 font-medium">{successMessage}</p>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    {!isSignUp && (
-                      <>
-                        <input
-                          id="remember-me"
-                          name="remember-me"
-                          type="checkbox"
-                          className="h-4 w-4 text-indigo-500 focus:ring-indigo-500 border-zinc-700 rounded bg-zinc-800"
-                        />
-                        <label htmlFor="remember-me" className="ml-2 block text-sm text-zinc-400">
-                          Keep active
-                        </label>
-                      </>
+            {/* Form Card */}
+            <div className="w-full bg-white/60 backdrop-blur-xl rounded-3xl p-6 md:p-8 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] border border-white">
+                <AnimatePresence mode="wait">
+                    {(error || successMessage) && (
+                        <motion.div 
+                            initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                            animate={{ opacity: 1, height: 'auto', marginBottom: 20 }}
+                            exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                            className={`flex items-center justify-center gap-2 text-xs font-medium py-2 rounded-lg ${error ? 'text-rose-500 bg-rose-50' : 'text-emerald-600 bg-emerald-50'}`}
+                        >
+                            {error ? <AlertCircle size={14} /> : <Fingerprint size={14} />}
+                            {error || successMessage}
+                        </motion.div>
                     )}
-                  </div>
-                  
-                  {!isSignUp && (
-                    <div className="text-sm">
-                      <a href="#" className="font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
-                        Recover Access
-                      </a>
+                </AnimatePresence>
+
+                <form onSubmit={handleAuth} className="space-y-4">
+                    <div className="space-y-1">
+                        <input 
+                            type="email" 
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            onFocus={() => setIsFocused(true)}
+                            onBlur={() => setIsFocused(false)}
+                            className="w-full bg-gray-50/50 hover:bg-gray-50 focus:bg-white border border-transparent focus:border-gray-200 rounded-xl px-4 py-4 text-center text-gray-900 placeholder-gray-400 outline-none transition-all duration-300 font-medium text-sm"
+                            placeholder="admin@access.portal"
+                            disabled={isLoading}
+                            required
+                        />
                     </div>
-                  )}
-                </div>
 
-                <Button
-                  type="submit"
-                  className="w-full py-3.5 text-base shadow-indigo-500/25 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500"
-                  isLoading={isLoading}
-                >
-                  {isLoading 
-                    ? 'Processing...' 
-                    : (isSignUp ? 'Establish Identity' : 'Secure Login')}
-                  {!isLoading && <ChevronRight className="ml-2 h-4 w-4" />}
-                </Button>
-              </form>
+                    <div className="space-y-1 relative group">
+                        <input 
+                            type={showPassword ? "text" : "password"}
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            onFocus={() => setIsFocused(true)}
+                            onBlur={() => setIsFocused(false)}
+                            className="w-full bg-gray-50/50 hover:bg-gray-50 focus:bg-white border border-transparent focus:border-gray-200 rounded-xl px-4 py-4 text-center text-gray-900 placeholder-gray-400 outline-none transition-all duration-300 font-medium tracking-widest text-sm"
+                            placeholder="••••••••"
+                            disabled={isLoading}
+                            required
+                        />
+                         <button
+                           type="button"
+                           onClick={() => setShowPassword(!showPassword)}
+                           className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 transition-colors focus:outline-none"
+                        >
+                           {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                    </div>
 
-              <div className="mt-6 text-center pt-4 border-t border-white/5 space-y-4">
-                <button 
-                  type="button"
-                  onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccessMessage(''); setIsLoading(false); }}
-                  className="text-sm text-zinc-400 hover:text-white transition-colors font-medium flex items-center justify-center w-full"
-                >
-                  {isSignUp ? (
-                    'Already credentialed? Return to Login'
-                  ) : (
-                     <>
-                      <UserPlus className="h-4 w-4 mr-2" />
-                      Initialize New Identity
-                     </>
-                  )}
-                </button>
-              </div>
+                    <button 
+                        type="submit"
+                        disabled={isLoading}
+                        className="group relative w-full h-14 bg-black text-white rounded-xl overflow-hidden shadow-lg shadow-gray-200/50 hover:shadow-gray-300 transition-all disabled:opacity-70 disabled:cursor-not-allowed mt-2"
+                    >
+                         {/* White Fill Effect on Hover */}
+                        <div className="absolute inset-0 bg-white translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-[cubic-bezier(0.86,0,0.07,1)]" />
+                        
+                        {/* Content Container */}
+                        <div className="relative z-10 flex items-center justify-center h-full">
+                            {isLoading ? (
+                                <div className="flex items-center gap-2 text-gray-400">
+                                     <Loader2 size={18} className="animate-spin" />
+                                     <span className="text-sm font-medium">Processing...</span>
+                                </div>
+                            ) : (
+                                <div className="relative overflow-hidden h-5 flex flex-col justify-start text-sm font-medium w-full">
+                                     {/* Original Text */}
+                                     <span className="absolute inset-0 flex items-center justify-center gap-2 group-hover:-translate-y-[150%] transition-transform duration-500 ease-[cubic-bezier(0.86,0,0.07,1)]">
+                                        {isSignUp ? 'Generate Credentials' : 'Unlock Dashboard'} <ArrowRight size={16} />
+                                     </span>
+                                     
+                                     {/* Hover Text (Black) */}
+                                     <span className="absolute inset-0 flex items-center justify-center gap-2 text-black translate-y-[150%] group-hover:translate-y-0 transition-transform duration-500 ease-[cubic-bezier(0.86,0,0.07,1)]">
+                                        {isSignUp ? 'Create Identity' : 'Access System'} <ScanLine size={16} />
+                                     </span>
+                                </div>
+                            )}
+                        </div>
+                    </button>
+                </form>
+
+                 <div className="mt-6 text-center">
+                    <button 
+                        onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccessMessage(''); }}
+                        className="inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-black transition-colors"
+                    >
+                        {isSignUp ? (
+                            'Back to Login'
+                        ) : (
+                            <>
+                                <UserPlus size={12} />
+                                Register New User
+                            </>
+                        )}
+                    </button>
+                 </div>
             </div>
             
-            <div className="mt-8 flex items-center justify-center gap-2 text-zinc-600 text-xs uppercase tracking-widest font-semibold">
-              <Fingerprint className="h-4 w-4" />
-              <span>Level 5 Security Protocol Active</span>
+            <div className="mt-8 flex items-center gap-2 text-[10px] text-gray-400 uppercase tracking-widest opacity-50">
+                <Fingerprint size={12} />
+                <span>Biometric Secured</span>
             </div>
-          </div>
-        </div>
-      </div>
-      
-      {/* Right Side Visual */}
-      <div className="hidden lg:block relative w-0 flex-1">
-        <div className="absolute inset-0 h-full w-full bg-zinc-900">
-           <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1550751827-4bd374c3f58b?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80')] bg-cover bg-center opacity-40 mix-blend-overlay"></div>
-           <div className="absolute inset-0 bg-gradient-to-l from-zinc-950 via-zinc-950/80 to-transparent"></div>
-           
-           <div className="absolute bottom-0 left-0 p-12 text-white z-20">
-             <blockquote className="space-y-2 border-l-2 border-indigo-500 pl-6">
-               <p className="text-lg font-light italic text-zinc-300">
-                 "Without data, you're just another person with an opinion. Without security, you're just another target."
-               </p>
-               <footer className="text-sm font-semibold text-indigo-400">
-                 — Jack Ryan
-               </footer>
-             </blockquote>
-           </div>
-        </div>
-      </div>
+
+        </motion.div>
     </div>
   );
 };

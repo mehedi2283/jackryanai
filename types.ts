@@ -27,6 +27,13 @@ export interface FormSubmission {
   payload: Record<string, any>;
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+}
+
 export interface StoredCredential {
   id: string;
   clientName: string;
@@ -35,4 +42,5 @@ export interface StoredCredential {
   username: string; // Login Email
   password: string;
   lastUpdated: Date;
+  folderId: string | null;
 }

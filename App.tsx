@@ -9,121 +9,73 @@ import { RoutePath, User } from './types';
 import { supabase } from './services/supabase';
 
 const App: React.FC = () => {
-  // Authentication state
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Helper to fetch profile (non-blocking)
-  const fetchProfileAndUpgradeUser = async (sessionUser: any) => {
+  // Helper to fetch profile role in background
+  const fetchUserRole = async (uid: string) => {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('profiles')
         .select('role, username')
-        .eq('id', sessionUser.id)
+        .eq('id', uid)
         .single();
       
       if (data) {
-        // Map database role to application role type
-        let userRole: User['role'] = 'user';
-        if (data.role === 'grand_admin') userRole = 'grand_admin';
-        else if (data.role === 'admin') userRole = 'admin';
-
-        // Upgrade user state with profile data
-        setUser({ 
-          id: sessionUser.id, 
-          username: data.username || sessionUser.email || 'Operative', 
-          role: userRole
-        });
-      } else {
-         // Default fallback if profile missing or table doesn't exist yet
-         setUser({ 
-            id: sessionUser.id, 
-            username: sessionUser.email || 'Operative', 
-            role: 'user' 
-          });
+        // Update user with specific role if profile exists
+        setUser(prev => prev ? { 
+          ...prev, 
+          username: data.username || prev.username, 
+          role: (data.role as User['role']) || 'user' 
+        } : null);
       }
-    } catch (err) {
-      console.warn('Background profile fetch failed (likely missing table):', err);
-      // Ensure user is still set even if profile fetch fails
-      setUser((prev) => prev || { 
-        id: sessionUser.id, 
-        username: sessionUser.email || 'Operative', 
-        role: 'user' 
-      });
+    } catch (error) {
+      // If table doesn't exist or error, stay as basic user
+      console.warn("Profile fetch skipped");
     }
   };
 
-  // Initialize auth state from Supabase
   useEffect(() => {
-    let mounted = true;
-
-    const initializeAuth = async () => {
-      try {
-        // Check current session
-        const { data: { session }, error } = await supabase.auth.getSession();
-        
-        if (session?.user && mounted) {
-           // Optimistic Login: Default to user first
-           setUser({ 
-             id: session.user.id, 
-             username: session.user.email || 'Operative', 
-             role: 'user' 
-           });
-           
-           // Fetch profile in background to update username/role
-           await fetchProfileAndUpgradeUser(session.user);
-        }
-      } catch (error) {
-        console.error('Error checking auth session:', error);
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    initializeAuth();
-
-    // Listen for auth changes (sign in, sign out, etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
-      
+    // 1. Check active session on load
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        // Fetch profile immediately to ensure correct role
-        await fetchProfileAndUpgradeUser(session.user);
+        setUser({
+          id: session.user.id,
+          username: session.user.email || 'Operative',
+          role: 'user' // Default to user, upgrade later
+        });
+        fetchUserRole(session.user.id);
+      }
+      setLoading(false);
+    });
+
+    // 2. Listen for auth changes (Login, Logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          username: session.user.email || 'Operative',
+          role: 'user'
+        });
+        fetchUserRole(session.user.id);
       } else {
         setUser(null);
       }
-      
-      if (mounted) {
-        setLoading(false);
-      }
+      setLoading(false);
     });
 
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleLogout = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch (error) {
-      console.error('Error during sign out:', error);
-    } finally {
-      // Always clear local state to ensure UI updates even if network fails
-      setUser(null);
-    }
+    await supabase.auth.signOut();
+    setUser(null);
   };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
-          <p className="text-zinc-400 text-sm font-mono animate-pulse">Verifying Security Clearance...</p>
-        </div>
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
       </div>
     );
   }
@@ -138,7 +90,6 @@ const App: React.FC = () => {
           element={user ? <Navigate to={RoutePath.DASHBOARD} replace /> : <LoginPage />} 
         />
         
-        {/* Protected Routes Wrapper */}
         <Route
           path={RoutePath.DASHBOARD}
           element={
@@ -165,7 +116,6 @@ const App: React.FC = () => {
           }
         />
 
-        {/* Catch all redirect */}
         <Route path="*" element={<Navigate to={RoutePath.DASHBOARD} replace />} />
       </Routes>
     </HashRouter>
