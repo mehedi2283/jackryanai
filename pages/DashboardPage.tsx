@@ -1012,7 +1012,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
     }
   };
 
-  const PaginationControls = () => {
+  const PaginationControls = ({ variant = 'default' }: { variant?: 'default' | 'minimal' } = {}) => {
     if (totalItems === 0 && searchQuery) return null;
     if (totalPages <= 1) return null;
     
@@ -1028,16 +1028,19 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
       pageNumbers.push(i);
     }
 
-    return (
-      <div className="flex items-center justify-center border-t border-gray-200 px-4 py-4 sm:px-6 bg-white rounded-b-2xl mt-20 transition-all"> {/* Changed mt-12 to mt-20 for better gap */}
+    const containerClasses = variant === 'default' 
+      ? "flex items-center justify-center border-t border-gray-200 px-4 py-4 sm:px-6 bg-white rounded-b-2xl mt-20 transition-all"
+      : "flex items-center space-x-2";
+
+    const content = (
         <div className="flex items-center space-x-2">
             <button 
                 onClick={() => goToPage(currentPage - 1)} 
                 disabled={currentPage === 1} 
-                className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                className={`rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent transition-colors ${variant === 'minimal' ? 'p-1.5' : 'p-2'}`}
                 title="Previous"
             >
-                <ChevronLeft className="h-5 w-5" />
+                <ChevronLeft className={variant === 'minimal' ? "h-4 w-4" : "h-5 w-5"} />
             </button>
             
             <div className="hidden sm:flex items-center space-x-1">
@@ -1045,7 +1048,11 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                     <button 
                         key={page} 
                         onClick={() => goToPage(page)} 
-                        className={`w-8 h-8 rounded-lg text-sm font-medium transition-all duration-200 ${currentPage === page ? 'bg-indigo-600 text-white shadow-md scale-105' : 'text-gray-600 hover:bg-gray-100'}`}
+                        className={`rounded-lg font-medium transition-all duration-200 ${
+                            currentPage === page 
+                                ? 'bg-indigo-600 text-white shadow-md' 
+                                : 'text-gray-600 hover:bg-gray-100'
+                        } ${variant === 'minimal' ? 'w-7 h-7 text-xs' : 'w-8 h-8 text-sm scale-105'}`}
                     >
                         {page}
                     </button>
@@ -1055,12 +1062,21 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
             <button 
                 onClick={() => goToPage(currentPage + 1)} 
                 disabled={currentPage === totalPages} 
-                className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                className={`rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent transition-colors ${variant === 'minimal' ? 'p-1.5' : 'p-2'}`}
                 title="Next"
             >
-                <ChevronRight className="h-5 w-5" />
+                <ChevronRight className={variant === 'minimal' ? "h-4 w-4" : "h-5 w-5"} />
             </button>
         </div>
+    );
+
+    if (variant === 'minimal') {
+        return content;
+    }
+
+    return (
+      <div className={containerClasses}>
+        {content}
       </div>
     );
   };
@@ -1109,7 +1125,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
   };
 
   return (
-    <div className="space-y-6 pb-48"> {/* Increased bottom padding to pb-48 to prevent overlap */}
+    <div className="space-y-6 pb-24"> {/* Reduced bottom padding from pb-48 to pb-24 */}
       
       {/* Toast Notification */}
       {toast && (
@@ -1182,9 +1198,11 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
            <div className="flex-shrink-0 flex space-x-2">
                {activeMainTab === 'credentials' && (
                  <>
-                   <Button onClick={() => setIsSqlModalOpen(true)} variant="secondary" className="px-3" title="Database Setup">
-                      <Terminal className="h-5 w-5 text-gray-500" />
-                   </Button>
+                   {user?.role === 'grand_admin' && (
+                     <Button onClick={() => setIsSqlModalOpen(true)} variant="secondary" className="px-3" title="Database Setup">
+                        <Terminal className="h-5 w-5 text-gray-500" />
+                     </Button>
+                   )}
                    <Button onClick={() => setIsCreateFolderModalOpen(true)} variant="secondary" className="w-full sm:w-auto px-4"><FolderPlus className="h-5 w-5" /></Button>
                    <Button onClick={openAddModal} className="w-full sm:w-auto"><Plus className="h-5 w-5 mr-2" />Add Credential</Button>
                  </>
@@ -1194,7 +1212,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
       </div>
 
       {/* Main Tab Navigation */}
-      <div className="border-b border-gray-200">
+      <div className="border-b border-gray-200 flex items-center justify-between pr-4">
         <nav className="-mb-px flex space-x-8" aria-label="Tabs">
           <button
             onClick={() => { setActiveMainTab('credentials'); setSearchQuery(''); setCurrentPage(1); setExpandedSubmissionId(null); setSelectedCrmFilter(null); clearSelection(); }}
@@ -1213,6 +1231,11 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
              <span className={`ml-3 py-0.5 px-2.5 rounded-full text-xs font-medium inline-block ${activeMainTab === 'submissions' ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'}`}>{totalSubmissionsCount}</span>
           </button>
         </nav>
+        
+        {/* Pagination Top Right - Visible on Mobile too */}
+        <div>
+            <PaginationControls variant="minimal" />
+        </div>
       </div>
 
       {/* CREDENTIALS TAB CONTENT */}
@@ -1456,8 +1479,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
             </AnimatePresence>,
             document.body
           )}
-
-          <PaginationControls />
         </section>
       )}
 
@@ -1493,9 +1514,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
              ) : filteredSubmissions.length > 0 ? (
                 <div key={activeFormTab} className="flex flex-col space-y-3 animate-fade-in">
                   {currentSubmissions.map((submission) => {
-                     // ... (Existing submission rendering logic retained for brevity, assumes identical to input file)
-                     // Since the prompt asks to update the file, I need to include the full content to be safe.
-                     // Copying submission rendering logic from original.
                     const isExpanded = expandedSubmissionId === submission.id;
                     const isDropdownOpen = openStatusId === submission.id;
                     const payloadKeys = Object.keys(submission.payload);
@@ -1608,7 +1626,6 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ user }) => {
                 </div>
              )}
           </div>
-          <PaginationControls />
         </section>
       )}
 
