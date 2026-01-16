@@ -1,7 +1,10 @@
 import React from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Shield, LayoutDashboard, LogOut, Menu, X, Users, Crown, ChevronUp } from 'lucide-react';
+import { Shield, LayoutDashboard, LogOut, Menu, X, Users, Crown, ChevronUp, MessageSquare, Flame } from 'lucide-react';
 import { RoutePath } from '../types';
+import CommandPalette from './CommandPalette';
+import InactivityLock from './InactivityLock';
+import StealthMode from './StealthMode';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -21,6 +24,8 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
   // Filter navigation items based on role
   const navItems = [
     { name: 'Dashboard', path: RoutePath.DASHBOARD, icon: LayoutDashboard },
+    { name: 'Sentinel Chat', path: '/chat', icon: MessageSquare },
+    { name: 'Dead Drop', path: RoutePath.DEAD_DROP, icon: Flame },
     // Only show Users tab if user is admin or grand_admin
     ...(isAdminOrGrand ? [{ name: 'Users', path: RoutePath.USERS, icon: Users }] : []),
   ];
@@ -45,6 +50,15 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
 
   return (
     <div className="h-screen bg-gray-50 flex font-sans text-gray-900 overflow-hidden">
+      {/* Global Command Palette */}
+      <CommandPalette onLogout={onLogout} />
+      
+      {/* Auto Lock Screen */}
+      {user && <InactivityLock userEmail={user.username} onLogout={onLogout} timeoutMinutes={5} />}
+
+      {/* Stealth Mode Overlay */}
+      <StealthMode />
+
       {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
         <div 
@@ -99,7 +113,7 @@ const Layout: React.FC<LayoutProps> = ({ children, onLogout, user }) => {
         {/* Fixed Footer (User Info & Logout) */}
         <div className="flex-shrink-0 p-4 border-t border-zinc-900 bg-zinc-950/50">
               <div className="flex items-center gap-3 mb-3 px-2">
-                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold shadow-lg ring-1 ring-white/10 ${user?.role === 'grand_admin' ? 'bg-gradient-to-br from-amber-400 to-orange-600' : 'bg-gradient-to-br from-indigo-500 to-purple-600'}`}>
+                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold shadow-sm ring-1 ring-white/10 ${user?.role === 'grand_admin' ? 'bg-gradient-to-br from-amber-400 to-orange-600' : 'bg-gradient-to-br from-indigo-500 to-purple-600'}`}>
                     {user?.role === 'grand_admin' ? <Crown className="h-5 w-5" /> : user?.username.charAt(0).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">

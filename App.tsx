@@ -4,6 +4,8 @@ import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import UsersPage from './pages/UsersPage';
+import ChatPage from './pages/ChatPage';
+import DeadDropPage from './pages/DeadDropPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import { RoutePath, User } from './types';
 import { supabase } from './services/supabase';
@@ -96,6 +98,28 @@ const App: React.FC = () => {
             <ProtectedRoute isAuthenticated={!!user}>
               <Layout onLogout={handleLogout} user={user}>
                 <DashboardPage user={user} />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path={RoutePath.CHAT}
+          element={
+            <ProtectedRoute isAuthenticated={!!user}>
+              <Layout onLogout={handleLogout} user={user}>
+                <ChatPage />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path={RoutePath.DEAD_DROP + "/*"}
+          element={
+            <ProtectedRoute isAuthenticated={!!user}>
+              <Layout onLogout={handleLogout} user={user}>
+                <DeadDropPage />
               </Layout>
             </ProtectedRoute>
           }

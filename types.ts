@@ -1,3 +1,4 @@
+
 export interface User {
   id: string;
   username: string;
@@ -15,7 +16,9 @@ export enum RoutePath {
   LOGIN = '/login',
   DASHBOARD = '/',
   USERS = '/users',
-  ANALYTICS = '/analytics'
+  ANALYTICS = '/analytics',
+  CHAT = '/chat',
+  DEAD_DROP = '/dead-drop'
 }
 
 export interface FormSubmission {
